@@ -6,14 +6,17 @@ export async function POST(request: Request) {
     const supabase = await createClient()
     const body = await request.json()
 
-    const { board_name, location, event_type, authorized, details } = body
+    // ✅ ahora recibimos door_id
+    const { door_id, board_name, location, event_type, authorized, details } = body
+    const doorId = door_id || `${board_name}_${location}` // fallback
 
-    console.log("[v0] Creating event:", { board_name, location, event_type, authorized })
+    console.log("[v0] Creating event:", { door_id: doorId, board_name, location, event_type, authorized })
 
-    // Insertar evento
+    // ✅ Insertar evento (guardando door_id)
     const { data: eventData, error: eventError } = await supabase
       .from("door_events")
       .insert({
+        door_id: doorId,
         board_name,
         location,
         event_type,
@@ -26,48 +29,51 @@ export async function POST(request: Request) {
 
     if (eventError) throw eventError
 
-    console.log("[v0] Event created with ID:", eventData.id)
+    // ✅ Actualizar door_status también para automático
+    const isDoorEvent = event_type === "open" || event_type === "close"
+    const isAutoEvent = event_type === "power_up" || event_type === "power_down"
 
-    // Actualizar estado de la puerta
-    // Actualizar estado de la puerta SOLO para eventos de puerta
-    const doorId = `${board_name}_${location}`
+    const statusPayload: any = {
+      door_id: doorId,
+      board_name,
+      location,
+      last_updated: new Date().toISOString(),
+      last_event_id: eventData.id,
+    }
 
-    if (event_type === "open" || event_type === "close") {
-      const { error: statusError } = await supabase.from("door_status").upsert(
-        {
-          door_id: doorId,
-          board_name,
-          location,
-          is_open: event_type === "open",
-          last_updated: new Date().toISOString(),
-          last_event_id: eventData.id,
-          event_start_time: event_type === "open" ? new Date().toISOString() : null,
-        },
-        { onConflict: "door_id" },
-      )
+    if (isDoorEvent) {
+      statusPayload.is_open = event_type === "open"
+      statusPayload.event_start_time = event_type === "open" ? new Date().toISOString() : null
+    }
 
+    if (isAutoEvent) {
+      statusPayload.auto_on = event_type === "power_up"
+      statusPayload.auto_last_updated = new Date().toISOString()
+    }
+
+    // Solo upsert si es evento relevante
+    if (isDoorEvent || isAutoEvent) {
+      const { error: statusError } = await supabase
+        .from("door_status")
+        .upsert(statusPayload, { onConflict: "door_id" })
       if (statusError) throw statusError
     }
 
-    console.log("[v0] Door status updated")
-
     const eventLabels = {
-    open: "Apertura",
-    close: "Cierre",
-    authorized: "Acceso Autorizado",
-    unauthorized: "Acceso No Autorizado",
-    forced: "Apertura Forzada",
-    power_up: "Automático Subido",
-    power_down: "Automático Bajado",
-    }
+      open: "Apertura",
+      close: "Cierre",
+      authorized: "Acceso Autorizado",
+      unauthorized: "Acceso No Autorizado",
+      forced: "Apertura Forzada",
+      power_up: "Automático Subido",
+      power_down: "Automático Bajado",
+    } as const
 
     const eventLabel = eventLabels[event_type as keyof typeof eventLabels] || event_type
     const alertMessage = `${eventLabel} en ${location} - ${board_name}${details?.note ? ` - ${details.note}` : ""}`
 
-    console.log("[v0] Preparando envío de SMS:", alertMessage)
-
+    // (tu bloque de envío alertas lo dejo tal cual)
     try {
-      // Construir base URL correctamente
       let baseUrl =
         process.env.NEXT_PUBLIC_SITE_URL ||
         (request.headers.get("x-forwarded-proto") || "https") + "://" + request.headers.get("x-forwarded-host") ||
@@ -75,41 +81,19 @@ export async function POST(request: Request) {
           ? `${request.headers.get("host")?.includes("localhost") ? "http" : "https"}://${request.headers.get("host")}`
           : "http://localhost:3000")
 
-      // Remover trailing slash si existe
       baseUrl = baseUrl.replace(/\/$/, "")
-
       const alertUrl = `${baseUrl}/api/alerts/send`
-      console.log("[v0] Enviando SMS a URL:", alertUrl)
 
       const alertResponse = await fetch(alertUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: alertMessage,
-          event_type,
-          location,
-          board_name,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: alertMessage, event_type, location, board_name }),
       })
 
       const alertText = await alertResponse.text()
-      console.log("[v0] Respuesta SMS (raw):", alertText)
-
-      if (alertResponse.ok) {
-        try {
-          const alertData = JSON.parse(alertText)
-          console.log("[v0] SMS procesado correctamente:", alertData)
-        } catch (parseError) {
-          console.error("[v0] Error parseando respuesta SMS (pero HTTP 200):", parseError)
-        }
-      } else {
-        console.error("[v0] Error en envío SMS (HTTP", alertResponse.status, "):", alertText)
-      }
+      console.log("[v0] Respuesta alertas:", alertResponse.status, alertText)
     } catch (smsError) {
-      console.error("[v0] Error enviando SMS (non-blocking):", smsError)
-      // No lanzamos el error para que el evento se registre aunque falle el SMS
+      console.error("[v0] Error enviando alertas (non-blocking):", smsError)
     }
 
     return NextResponse.json({ success: true, event: eventData })

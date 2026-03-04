@@ -31,17 +31,59 @@ interface DoorStatus {
   asset_description?: string
 }
 
+type AutoInfo = {
+  auto_on: boolean | null
+  last_updated: string | null
+  note: string | null
+}
+
+const keyOf = (board: string, loc: string) => `${board.trim().toUpperCase()}__${loc.trim().toUpperCase()}`
+
 export function DashboardMonitor() {
   const [doors, setDoors] = useState<DoorStatus[]>([])
+  const [autoByDoor, setAutoByDoor] = useState<Record<string, AutoInfo>>({})
   const [loading, setLoading] = useState(true)
   const [clearing, setClearing] = useState(false)
   const { toast } = useToast()
 
+  const fetchAutoForDoors = async (list: DoorStatus[]) => {
+    try {
+      const entries = await Promise.all(
+        list.map(async (door) => {
+          const qs = new URLSearchParams({
+            board_name: door.board_name,
+            location: door.location,
+          })
+
+          const res = await fetch(`/api/auto/status?${qs.toString()}`, { cache: "no-store" })
+          const data = await res.json()
+
+          const key = keyOf(door.board_name, door.location)
+
+          if (res.ok && data?.ok) {
+            return [key, { auto_on: data.auto_on, last_updated: data.last_updated, note: data.note }] as const
+          }
+          return [key, { auto_on: null, last_updated: null, note: null }] as const
+        }),
+      )
+
+      setAutoByDoor(Object.fromEntries(entries))
+    } catch (e) {
+      console.error("[v0] Error fetching auto status per door:", e)
+    }
+  }
+
   const fetchStatus = async () => {
     try {
-      const response = await fetch("/api/door/status")
+      const response = await fetch("/api/door/status", { cache: "no-store" })
       const data = await response.json()
-      setDoors(data)
+
+      const list = Array.isArray(data) ? data : []
+      setDoors(list)
+
+      if (list.length > 0) {
+        fetchAutoForDoors(list)
+      }
     } catch (error) {
       console.error("[v0] Error fetching door status:", error)
     } finally {
@@ -52,10 +94,7 @@ export function DashboardMonitor() {
   const handleClearStatus = async () => {
     setClearing(true)
     try {
-      const response = await fetch("/api/door/status/clear", {
-        method: "DELETE",
-      })
-
+      const response = await fetch("/api/door/status/clear", { method: "DELETE" })
       const result = await response.json()
 
       if (!response.ok) {
@@ -82,7 +121,7 @@ export function DashboardMonitor() {
 
   useEffect(() => {
     fetchStatus()
-    const interval = setInterval(fetchStatus, 5000)
+    const interval = setInterval(fetchStatus, 2000) // refresco más rápido
     return () => clearInterval(interval)
   }, [])
 
@@ -131,6 +170,7 @@ export function DashboardMonitor() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {doors.map((door) => {
           const displayName = door.custom_name || door.board_name
+          const auto = autoByDoor[keyOf(door.board_name, door.location)]
 
           return (
             <Card
@@ -146,21 +186,49 @@ export function DashboardMonitor() {
                   {door.is_open ? "Abierta" : "Cerrada"}
                 </Badge>
               </CardHeader>
+
               <CardContent>
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <MapPin className="h-4 w-4" />
                     {door.location}
                   </div>
+
                   {door.asset_description && (
                     <div className="text-xs text-muted-foreground italic">{door.asset_description}</div>
                   )}
+
+                  {/* AUTOMÁTICO */}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Automático</span>
+
+                    {auto?.auto_on === null || auto?.auto_on === undefined ? (
+                      <Badge variant="outline" className="bg-transparent">
+                        Sin dato
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant={auto.auto_on ? "default" : "secondary"}
+                        className={auto.auto_on ? "bg-green-500" : "bg-zinc-500"}
+                      >
+                        {auto.auto_on ? "Arriba (ON)" : "Abajo (OFF)"}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {auto?.last_updated && (
+                    <div className="text-xs text-muted-foreground">
+                      Auto actualizado: {new Date(auto.last_updated).toLocaleString("es-CL")}
+                    </div>
+                  )}
+
                   {door.is_open && door.event_start_time && (
                     <div className="flex items-center gap-2 text-sm text-red-400 font-medium">
                       <Clock className="h-4 w-4" />
                       Duración: {getDuration(door.event_start_time)}
                     </div>
                   )}
+
                   <div className="text-xs text-muted-foreground">
                     Actualizado: {new Date(door.last_updated).toLocaleString("es-CL")}
                   </div>
