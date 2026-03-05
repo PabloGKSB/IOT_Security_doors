@@ -1,261 +1,311 @@
 /*
- * ESP32-S3 Door Sensor Security System
- * 
- * Hardware Requirements:
+ * ESP32-S3 Door Sensor + Auto Status — Con Configuración Remota
+ *
+ * ─────────────────────────────────────────────
+ * ÚNICO valor hardcodeado: BOARD_ID
+ * Todo lo demás (board_name, location) se descarga
+ * desde el servidor al arrancar vía GET /api/config
+ * ─────────────────────────────────────────────
+ *
+ * Hardware:
  * - ESP32-S3 Dev Board
- * - Magnetic Reed Switch (Door Sensor)
- * - RFID-RC522 Module (for authorization)
- * - Buzzer (optional for local alerts)
- * 
- * Pin Configuration:
- * - DOOR_SENSOR_PIN: GPIO 4 (Reed switch)
- * - RFID SDA/SS: GPIO 5
- * - RFID SCK: GPIO 18
- * - RFID MOSI: GPIO 23
- * - RFID MISO: GPIO 19
- * - RFID RST: GPIO 22
- * - BUZZER_PIN: GPIO 2
+ * - Reed Switch en DOOR_SENSOR_PIN (GPIO 4)
+ * - Pin de estado automático en AUTO_STATUS_PIN (GPIO 5)
+ * - Buzzer opcional en BUZZER_PIN (GPIO 2)
+ *
+ * Dependencias Arduino:
+ * - ArduinoJson (by Benoit Blanchon)
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <MFRC522.h>
-#include <SPI.h>
 
-// WiFi credentials - CHANGE THESE
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// ─── CREDENCIALES WiFi ───────────────────────────────────────
+const char* WIFI_SSID     = "pablo";
+const char* WIFI_PASSWORD = "1234567890";
 
-// API endpoint - CHANGE THIS to your deployed URL
-const char* serverUrl = "https://your-app.vercel.app/api/door/event";
+// ─── BASE URL del servidor ───────────────────────────────────
+// Solo cambiar si deployed en otro dominio
+const char* API_BASE = "https://iot-security-doors.vercel.app";
 
-// IMPORTANT: Configure these values for each ESP32 board
-// Example configurations for each location:
-// SANTIAGO: boardName = "ESP32-SANTIAGO-01", location = "SANTIAGO CASA MATRIZ"
-// ANTOFAGASTA: boardName = "ESP32-ANTOFAGASTA-01", location = "ANTOFAGASTA"
-// COQUIMBO: boardName = "ESP32-COQUIMBO-01", location = "COQUIMBO"
-// CONCEPCIÓN: boardName = "ESP32-CONCEPCION-01", location = "CONCEPCIÓN"
-// PUERTO MONTT: boardName = "ESP32-PUERTOMONTT-01", location = "PUERTO MONTT"
+// ─── ÚNICO VALOR HARDCODEADO POR TABLERO ────────────────────
+// Debe coincidir exactamente con el door_id en /admin/assets
+const char* BOARD_ID = "ESP32-SANTIAGO-01";
 
-const char* boardName = "ESP32-SANTIAGO-01";  // Change for each board
-const char* location = "SANTIAGO CASA MATRIZ";  // Must match database locations
+// ─── CONFIG DESCARGADA REMOTAMENTE (se cargan en fetchConfig) ──
+char g_board_name[64] = "";   // Se llena desde /api/config
+char g_location[64]   = "";   // Se llena desde /api/config
+bool g_active         = true; // Si false, el tablero no reporta
 
-// Pin definitions
-#define DOOR_SENSOR_PIN 4
-#define BUZZER_PIN 2
-#define RST_PIN 22
-#define SS_PIN 5
+// ─── PINES ───────────────────────────────────────────────────
+#define DOOR_SENSOR_PIN  4
+#define AUTO_STATUS_PIN  5
+#define BUZZER_PIN       2
 
-// RFID setup
-MFRC522 rfid(SS_PIN, RST_PIN);
+// ─── AJUSTE DE POLARIDAD DEL REED SWITCH ────────────────────
+// false → LOW=abierta (imán lejos activa el pin)
+// true  → LOW=cerrada  (imán cerca activa el pin)
+const bool MAGNET_NEAR_IS_CLOSED = false;
 
-// Authorized RFID UIDs (add your card UIDs here)
-byte authorizedUIDs[][4] = {
-  {0xDE, 0xAD, 0xBE, 0xEF},  // Example UID 1
-  {0xCA, 0xFE, 0xBA, 0xBE}   // Example UID 2
-};
-const int numAuthorizedCards = 2;
+// ─── DEBOUNCE PUERTA ─────────────────────────────────────────
+const int           DOOR_STABLE_READS  = 8;
+const int           READ_INTERVAL_MS   = 25;
 
-// State tracking
-bool lastDoorState = HIGH;  // HIGH = closed, LOW = open
-bool rfidAuthorized = false;
-unsigned long lastRfidCheck = 0;
-const unsigned long RFID_CHECK_INTERVAL = 1000;  // Check RFID every 1 second
-const unsigned long AUTH_TIMEOUT = 5000;  // Authorization valid for 5 seconds
+// ─── DEBOUNCE AUTOMÁTICO ─────────────────────────────────────
+const unsigned long AUTO_DEBOUNCE_MS   = 250;
 
-void setup() {
-  Serial.begin(115200);
-  delay(1000);
-  
-  Serial.println("ESP32-S3 Door Sensor Starting...");
-  
-  // Initialize pins
-  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
-  
-  // Initialize SPI and RFID
-  SPI.begin();
-  rfid.PCD_Init();
-  Serial.println("RFID initialized");
-  
-  // Connect to WiFi
-  connectWiFi();
-  
-  // Read initial door state
-  lastDoorState = digitalRead(DOOR_SENSOR_PIN);
-  Serial.printf("Initial door state: %s\n", lastDoorState == HIGH ? "CLOSED" : "OPEN");
+// ─────────────────────────────────────────────────────────────
+// Utilidades
+// ─────────────────────────────────────────────────────────────
+
+static String escapeJson(const String& s) {
+  String out;
+  out.reserve(s.length());
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if      (c == '"')  out += "\\\"";
+    else if (c == '\\') out += "\\\\";
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else                out += c;
+  }
+  return out;
 }
 
-void loop() {
-  // Check WiFi connection
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi disconnected, reconnecting...");
-    connectWiFi();
-  }
-  
-  // Check for RFID card
-  checkRFID();
-  
-  // Read door sensor
-  bool currentDoorState = digitalRead(DOOR_SENSOR_PIN);
-  
-  // Detect state change
-  if (currentDoorState != lastDoorState) {
-    delay(50);  // Debounce
-    currentDoorState = digitalRead(DOOR_SENSOR_PIN);
-    
-    if (currentDoorState != lastDoorState) {
-      lastDoorState = currentDoorState;
-      handleDoorEvent(currentDoorState);
-    }
-  }
-  
-  delay(100);
+// ─────────────────────────────────────────────────────────────
+// Lectura de sensores
+// ─────────────────────────────────────────────────────────────
+
+bool readDoorOpen() {
+  bool pinHigh   = (digitalRead(DOOR_SENSOR_PIN) == HIGH);
+  bool magnetNear = !pinHigh;  // LOW  = imán cerca (INPUT_PULLUP)
+  bool closed    = MAGNET_NEAR_IS_CLOSED ? magnetNear : !magnetNear;
+  return !closed;
 }
+
+bool readAutoOn() {
+  // INPUT_PULLUP: HIGH = sin contacto = automático ARRIBA (ON)
+  return digitalRead(AUTO_STATUS_PIN) == HIGH;
+}
+
+// ─────────────────────────────────────────────────────────────
+// WiFi
+// ─────────────────────────────────────────────────────────────
 
 void connectWiFi() {
-  Serial.printf("Connecting to WiFi: %s\n", ssid);
-  WiFi.begin(ssid, password);
-  
+  Serial.printf("[WIFI] Conectando a %s", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
-  
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.println("\n[WIFI] Conectado! IP: " + WiFi.localIP().toString());
   } else {
-    Serial.println("\nWiFi connection failed!");
+    Serial.println("\n[WIFI] ERROR: No se pudo conectar.");
   }
 }
 
-void checkRFID() {
-  if (millis() - lastRfidCheck < RFID_CHECK_INTERVAL) {
-    return;
-  }
-  lastRfidCheck = millis();
-  
-  // Reset authorization if timeout expired
-  if (rfidAuthorized && millis() - lastRfidCheck > AUTH_TIMEOUT) {
-    rfidAuthorized = false;
-  }
-  
-  // Check for new card
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
-    return;
-  }
-  
-  Serial.print("RFID detected: ");
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
-    Serial.print(rfid.uid.uidByte[i], HEX);
-  }
-  Serial.println();
-  
-  // Check if card is authorized
-  bool authorized = false;
-  for (int i = 0; i < numAuthorizedCards; i++) {
-    if (memcmp(rfid.uid.uidByte, authorizedUIDs[i], 4) == 0) {
-      authorized = true;
-      break;
-    }
-  }
-  
-  if (authorized) {
-    Serial.println("Access GRANTED");
-    rfidAuthorized = true;
-    beep(2, 100);  // Two short beeps
-    sendEvent("authorized", true, "RFID card authorized");
-  } else {
-    Serial.println("Access DENIED");
-    beep(1, 500);  // One long beep
-    sendEvent("unauthorized", false, "Unknown RFID card");
-  }
-  
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-}
+// ─────────────────────────────────────────────────────────────
+// Descarga de configuración remota
+// ─────────────────────────────────────────────────────────────
 
-void handleDoorEvent(bool doorState) {
-  String eventType;
-  bool authorized = false;
-  String details = "";
-  
-  if (doorState == LOW) {  // Door opened
-    if (rfidAuthorized) {
-      eventType = "open";
-      authorized = true;
-      details = "Door opened with authorization";
-      Serial.println("Door OPENED (Authorized)");
-      rfidAuthorized = false;  // Reset authorization
-    } else {
-      eventType = "forced";
-      authorized = false;
-      details = "Door opened without authorization";
-      Serial.println("Door OPENED (FORCED/UNAUTHORIZED)");
-      beep(3, 200);  // Three beeps for alert
-    }
-  } else {  // Door closed
-    eventType = "close";
-    authorized = true;
-    details = "Door closed";
-    Serial.println("Door CLOSED");
-  }
-  
-  sendEvent(eventType, authorized, details);
-}
-
-void sendEvent(String eventType, bool authorized, String details) {
+bool fetchConfig() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Cannot send event - WiFi not connected");
+    Serial.println("[CONFIG] Sin WiFi, no se puede descargar la configuración.");
+    return false;
+  }
+
+  String url = String(API_BASE) + "/api/config?board_id=" + String(BOARD_ID);
+  Serial.println("[CONFIG] GET " + url);
+
+  HTTPClient http;
+  http.begin(url);
+  int code = http.GET();
+
+  if (code != 200) {
+    Serial.printf("[CONFIG] ERROR HTTP %d — usando valores por defecto.\n", code);
+    http.end();
+    return false;
+  }
+
+  String body = http.getString();
+  http.end();
+
+  StaticJsonDocument<512> doc;
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) {
+    Serial.println("[CONFIG] ERROR parseando JSON — usando valores por defecto.");
+    return false;
+  }
+
+  if (!doc["ok"].as<bool>()) {
+    Serial.println("[CONFIG] Servidor respondió ok=false — usando valores por defecto.");
+    return false;
+  }
+
+  // Guardar en variables globales
+  strlcpy(g_board_name, doc["board_name"] | BOARD_ID, sizeof(g_board_name));
+  strlcpy(g_location,   doc["location"]   | "SIN UBICACION", sizeof(g_location));
+  g_active = doc["active"] | true;
+
+  Serial.printf("[CONFIG] board_name : %s\n", g_board_name);
+  Serial.printf("[CONFIG] location   : %s\n", g_location);
+  Serial.printf("[CONFIG] active     : %s\n", g_active ? "SI" : "NO");
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Envío de eventos al servidor
+// ─────────────────────────────────────────────────────────────
+
+void sendEvent(const char* eventType, const String& detailsJson) {
+  if (!g_active) {
+    Serial.println("[WARN] Tablero inactivo, evento no enviado.");
     return;
   }
-  
-  HTTPClient http;
-  http.begin(serverUrl);
-  http.addHeader("Content-Type", "application/json");
-  
-  StaticJsonDocument<300> doc;
-  doc["event_type"] = eventType;
-  doc["authorized"] = authorized;
-  doc["door_id"] = "main_door";
-  doc["board_name"] = boardName;
-  doc["location"] = location;
-  
-  JsonObject detailsObj = doc.createNestedObject("details");
-  detailsObj["message"] = details;
-  detailsObj["rssi"] = WiFi.RSSI();
-  
-  String jsonPayload;
-  serializeJson(doc, jsonPayload);
-  
-  Serial.printf("Sending event: %s\n", jsonPayload.c_str());
-  
-  int httpResponseCode = http.POST(jsonPayload);
-  
-  if (httpResponseCode > 0) {
-    String response = http.getString();
-    Serial.printf("Response: %d - %s\n", httpResponseCode, response.c_str());
-  } else {
-    Serial.printf("Error sending event: %s\n", http.errorToString(httpResponseCode).c_str());
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WARN] WiFi desconectado, evento no enviado.");
+    return;
   }
-  
+
+  String url = String(API_BASE) + "/api/door/event";
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+
+  String json = "{";
+  json += "\"door_id\":\""    + String(BOARD_ID)     + "\",";
+  json += "\"board_name\":\"" + String(g_board_name) + "\",";
+  json += "\"location\":\""   + String(g_location)   + "\",";
+  json += "\"event_type\":\"" + String(eventType)    + "\",";
+  json += "\"details\":"      + detailsJson;
+  json += "}";
+
+  Serial.println("[HTTP] POST " + url);
+  Serial.println("[HTTP] Body: " + json);
+
+  int httpCode = http.POST(json);
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] %d — %s\n", httpCode, http.getString().c_str());
+  } else {
+    Serial.printf("[HTTP] ERROR: %s\n", http.errorToString(httpCode).c_str());
+  }
   http.end();
 }
 
-void beep(int times, int duration) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(duration);
-    digitalWrite(BUZZER_PIN, LOW);
-    if (i < times - 1) {
-      delay(duration);
+// ─────────────────────────────────────────────────────────────
+// Estado de puerta (debounce)
+// ─────────────────────────────────────────────────────────────
+
+bool         lastRawDoorOpen  = false;
+int          doorStableCount  = 0;
+bool         doorIsOpen       = false;
+unsigned long doorOpenTimeMs  = 0;
+
+// ─────────────────────────────────────────────────────────────
+// Estado automático (debounce)
+// ─────────────────────────────────────────────────────────────
+
+bool          autoWasOn          = false;
+unsigned long autoLastChangeMs   = 0;
+
+// ─────────────────────────────────────────────────────────────
+// SETUP
+// ─────────────────────────────────────────────────────────────
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);
+  pinMode(AUTO_STATUS_PIN, INPUT_PULLUP);
+  pinMode(BUZZER_PIN,      OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // 1. Conectar WiFi
+  connectWiFi();
+
+  // 2. Descargar configuración remota
+  //    Si falla, g_board_name queda vacío → usamos BOARD_ID como fallback
+  if (!fetchConfig()) {
+    strlcpy(g_board_name, BOARD_ID,          sizeof(g_board_name));
+    strlcpy(g_location,   "SIN UBICACION",   sizeof(g_location));
+  }
+
+  // 3. Leer estado inicial
+  doorIsOpen       = readDoorOpen();
+  lastRawDoorOpen  = doorIsOpen;
+  doorStableCount  = DOOR_STABLE_READS;
+  autoWasOn        = readAutoOn();
+
+  if (doorIsOpen) doorOpenTimeMs = millis();
+
+  Serial.printf("[BOOT] Puerta     : %s\n", doorIsOpen ? "ABIERTA" : "CERRADA");
+  Serial.printf("[BOOT] Automático : %s\n", autoWasOn  ? "ARRIBA (ON)" : "ABAJO (OFF)");
+}
+
+// ─────────────────────────────────────────────────────────────
+// LOOP
+// ─────────────────────────────────────────────────────────────
+
+void loop() {
+  // Reconexión WiFi si se pierde
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WARN] WiFi perdido, reconectando...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    delay(3000);
+    return;
+  }
+
+  // ── PUERTA ────────────────────────────────────────────────
+  bool currentRawDoor = readDoorOpen();
+
+  if (currentRawDoor == lastRawDoorOpen) {
+    // Contador con tope para evitar overflow
+    if (doorStableCount < DOOR_STABLE_READS + 1) doorStableCount++;
+  } else {
+    doorStableCount  = 0;
+    lastRawDoorOpen  = currentRawDoor;
+  }
+
+  if (doorStableCount >= DOOR_STABLE_READS && currentRawDoor != doorIsOpen) {
+    doorIsOpen = currentRawDoor;
+    unsigned long now = millis();
+
+    if (doorIsOpen) {
+      doorOpenTimeMs = now;
+      sendEvent("open", "{\"note\":\"Puerta abierta (estado estable)\"}");
+      Serial.println("[STATE] PUERTA ABIERTA");
+    } else {
+      unsigned long durationS = (now - doorOpenTimeMs) / 1000;
+      String note = "Puerta cerrada. Duración: " + String(durationS) + "s";
+      sendEvent("close", "{\"note\":\"" + escapeJson(note) + "\"}");
+      Serial.println("[STATE] PUERTA CERRADA — duración: " + String(durationS) + "s");
     }
   }
+
+  // ── AUTOMÁTICO ────────────────────────────────────────────
+  bool autoOn = readAutoOn();
+  if (autoOn != autoWasOn) {
+    unsigned long now = millis();
+    if (now - autoLastChangeMs > AUTO_DEBOUNCE_MS) {
+      autoLastChangeMs = now;
+      autoWasOn        = autoOn;
+
+      if (autoOn) {
+        sendEvent("power_up",   "{\"note\":\"Automático subido (ON)\"}");
+        Serial.println("[AUTO] SUBIDO (power_up)");
+      } else {
+        sendEvent("power_down", "{\"note\":\"Automático bajado (OFF)\"}");
+        Serial.println("[AUTO] BAJADO (power_down)");
+      }
+    }
+  }
+
+  delay(READ_INTERVAL_MS);
 }
