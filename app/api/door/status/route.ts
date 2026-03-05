@@ -5,6 +5,7 @@ export async function GET() {
   try {
     const supabase = await createClient()
 
+    // 1) Traer assets activos
     const { data: assets, error: assetsError } = await supabase
       .from("assets")
       .select("*")
@@ -13,6 +14,7 @@ export async function GET() {
 
     if (assetsError) throw assetsError
 
+    // 2) Traer últimos estados de puertas
     const { data: statuses, error: statusError } = await supabase
       .from("door_status")
       .select("*")
@@ -20,32 +22,29 @@ export async function GET() {
 
     if (statusError) throw statusError
 
-    const result = (assets || []).map((asset) => {
-      const status = (statuses || []).find((s) => s.door_id === asset.door_id)
+    // 3) Unir assets con su estado por door_id (si existe)
+    const result = (assets || []).map((asset: any) => {
+      const status = (statuses || []).find((s: any) => s.door_id === asset.door_id)
 
-      if (status) {
-        // Si existe estado, lo usamos con el nombre personalizado del activo
-        return {
-          ...status,
-          custom_name: asset.custom_name,
-          asset_location: asset.location,
-          asset_description: asset.description,
-        }
-      } else {
-        // Si no existe estado, creamos uno por defecto con el activo
-        return {
-          id: asset.id,
-          door_id: asset.door_id,
-          board_name: asset.board_name,
-          location: asset.location,
-          is_open: false,
-          last_updated: asset.updated_at || asset.created_at,
-          event_start_time: null,
-          last_event_id: null,
-          custom_name: asset.custom_name,
-          asset_location: asset.location,
-          asset_description: asset.description,
-        }
+      return {
+        // IDs consistentes (no ambiguos)
+        asset_id: asset.id,               // UUID de assets
+        status_id: status?.id ?? null,    // UUID de door_status (si existe)
+
+        // Llave de correlación / negocio
+        door_id: asset.door_id,
+        board_name: asset.board_name,
+
+        // Estado (si no existe, default)
+        is_open: status?.is_open ?? false,
+        last_updated: status?.last_updated ?? asset.updated_at ?? asset.created_at,
+        event_start_time: status?.event_start_time ?? null,
+        last_event_id: status?.last_event_id ?? null,
+
+        // Metadata del asset
+        custom_name: asset.custom_name,
+        asset_location: asset.location,
+        asset_description: asset.description,
       }
     })
 
