@@ -24,12 +24,8 @@ import { ArrowLeft, Plus, Pencil, Trash2, Circle } from "lucide-react"
 import Link from "next/link"
 
 type AssetApi = {
-  // ✅ nuevo recomendado
-  asset_id?: string
-  // ✅ compatibilidad viejo
-  id?: string
-
-  door_id: string
+  id?: string // UUID (interno BD)
+  door_id: string // ID ESP32 (externo / operacional)
   custom_name: string
   location: string
   board_name: string | null
@@ -40,10 +36,10 @@ type AssetApi = {
 }
 
 type AssetUI = {
-  // ✅ siempre presente en UI
-  asset_id: string
-
+  // Conservamos uuid por si lo quieres mostrar o usar después, pero NO lo usamos para editar
+  id?: string
   door_id: string
+
   custom_name: string
   location: string
   board_name: string | null
@@ -74,14 +70,21 @@ export default function AssetsPage() {
   })
   const { toast } = useToast()
 
-  const normalizeAssets = (data: any[]): AssetUI[] => {
-    return (data || [])
-      .map((a: AssetApi) => {
-        const asset_id = a.asset_id ?? a.id ?? ""
-        if (!asset_id) return null
+  const fetchAssets = async () => {
+    try {
+      const response = await fetch("/api/assets")
+      const data = (await response.json()) as AssetApi[]
 
-        return {
-          asset_id,
+      if (!Array.isArray(data)) {
+        setAssets([])
+        return
+      }
+
+      // Normalizamos sin forzar asset_id; trabajamos con door_id
+      const normalized: AssetUI[] = data
+        .filter((a) => !!a?.door_id)
+        .map((a) => ({
+          id: a.id,
           door_id: a.door_id,
           custom_name: a.custom_name,
           location: a.location,
@@ -90,23 +93,14 @@ export default function AssetsPage() {
           active: !!a.active,
           created_at: a.created_at,
           updated_at: a.updated_at,
-        } as AssetUI
-      })
-      .filter(Boolean) as AssetUI[]
-  }
+        }))
 
-  const fetchAssets = async () => {
-    try {
-      const response = await fetch("/api/assets")
-      const data = await response.json()
-
-      const normalized = normalizeAssets(Array.isArray(data) ? data : [])
       setAssets(normalized)
 
-      // Si algo viene sin id, lo avisamos
-      const missing = (Array.isArray(data) ? data : []).filter((a: any) => !(a?.asset_id || a?.id))
-      if (missing.length > 0) {
-        console.warn("[v0] Assets sin asset_id/id:", missing)
+      // Debug útil si algo viene raro
+      const missingDoorId = data.filter((a: any) => !a?.door_id)
+      if (missingDoorId.length > 0) {
+        console.warn("[v0] Assets sin door_id:", missingDoorId)
       }
     } catch (error) {
       console.error("[v0] Error fetching assets:", error)
@@ -150,14 +144,17 @@ export default function AssetsPage() {
 
     try {
       const isEditing = !!editingAsset
-      const assetId = editingAsset?.asset_id
 
-      const url = isEditing ? `/api/assets/${assetId}` : "/api/assets"
-      const method = isEditing ? "PUT" : "POST"
-
-      if (isEditing && !assetId) {
-        throw new Error("No se encontró asset_id para editar (evitando /api/assets/undefined).")
+      // ✅ Editar por door_id (ID ESP32)
+      if (isEditing && !editingAsset?.door_id) {
+        throw new Error("No se encontró door_id para editar.")
       }
+
+      const url = isEditing
+        ? `/api/assets/by-door-id/${encodeURIComponent(editingAsset!.door_id)}`
+        : "/api/assets"
+
+      const method = isEditing ? "PUT" : "POST"
 
       const response = await fetch(url, {
         method,
@@ -201,11 +198,11 @@ export default function AssetsPage() {
     setDialogOpen(true)
   }
 
-  const handleDelete = async (assetId: string) => {
-    if (!assetId) {
+  const handleDelete = async (doorId: string) => {
+    if (!doorId) {
       toast({
         title: "Error",
-        description: "asset_id vacío (evitando /api/assets/undefined).",
+        description: "door_id vacío (evitando DELETE).",
         variant: "destructive",
       })
       return
@@ -214,7 +211,8 @@ export default function AssetsPage() {
     if (!confirm("¿Estás seguro de eliminar este activo?")) return
 
     try {
-      const response = await fetch(`/api/assets/${assetId}`, {
+      // ✅ Borrar por door_id
+      const response = await fetch(`/api/assets/by-door-id/${encodeURIComponent(doorId)}`, {
         method: "DELETE",
       })
 
@@ -281,7 +279,7 @@ export default function AssetsPage() {
             <UserNav />
           </div>
           <h1 className="text-3xl font-bold">Gestión de Activos</h1>
-          <p className="text-muted-foreground mt-1">Administrar activos conectados al ESP32</p>
+          <p className="text-muted-foreground mt-1">Administrar activos conectados al sistema</p>
         </div>
       </header>
 
@@ -313,14 +311,14 @@ export default function AssetsPage() {
 
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
-                        <Label htmlFor="door_id">ID del Activo *</Label>
+                        <Label htmlFor="door_id">ID del Activo (ESP32) *</Label>
                         <Input
                           id="door_id"
                           value={formData.door_id}
                           onChange={(e) => setFormData({ ...formData, door_id: e.target.value })}
                           placeholder="ESP32-SANTIAGO-01"
                           required
-                          disabled={!!editingAsset}
+                          disabled={!!editingAsset} // no se cambia el id operativo
                         />
                       </div>
 
@@ -396,7 +394,7 @@ export default function AssetsPage() {
 
               <TableBody>
                 {assets.map((asset) => (
-                  <TableRow key={asset.asset_id}>
+                  <TableRow key={asset.door_id}>
                     <TableCell>{getStatusIndicator(asset.door_id)}</TableCell>
                     <TableCell className="font-medium">{asset.custom_name}</TableCell>
                     <TableCell className="font-mono text-sm">{asset.door_id}</TableCell>
@@ -410,7 +408,7 @@ export default function AssetsPage() {
                         <Button variant="ghost" size="sm" onClick={() => handleEdit(asset)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(asset.asset_id)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleDelete(asset.door_id)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
