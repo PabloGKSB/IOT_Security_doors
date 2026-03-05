@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,8 +23,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Plus, Pencil, Trash2, Circle } from "lucide-react"
 import Link from "next/link"
 
-interface Asset {
-  id: string
+type AssetApi = {
+  // ✅ nuevo recomendado
+  asset_id?: string
+  // ✅ compatibilidad viejo
+  id?: string
+
+  door_id: string
+  custom_name: string
+  location: string
+  board_name: string | null
+  description: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+type AssetUI = {
+  // ✅ siempre presente en UI
+  asset_id: string
+
   door_id: string
   custom_name: string
   location: string
@@ -43,11 +60,11 @@ interface DoorStatus {
 }
 
 export default function AssetsPage() {
-  const [assets, setAssets] = useState<Asset[]>([])
+  const [assets, setAssets] = useState<AssetUI[]>([])
   const [doorStatuses, setDoorStatuses] = useState<Record<string, DoorStatus>>({})
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [editingAsset, setEditingAsset] = useState<Asset | null>(null)
+  const [editingAsset, setEditingAsset] = useState<AssetUI | null>(null)
   const [formData, setFormData] = useState({
     door_id: "",
     custom_name: "",
@@ -57,11 +74,40 @@ export default function AssetsPage() {
   })
   const { toast } = useToast()
 
+  const normalizeAssets = (data: any[]): AssetUI[] => {
+    return (data || [])
+      .map((a: AssetApi) => {
+        const asset_id = a.asset_id ?? a.id ?? ""
+        if (!asset_id) return null
+
+        return {
+          asset_id,
+          door_id: a.door_id,
+          custom_name: a.custom_name,
+          location: a.location,
+          board_name: a.board_name ?? null,
+          description: a.description ?? null,
+          active: !!a.active,
+          created_at: a.created_at,
+          updated_at: a.updated_at,
+        } as AssetUI
+      })
+      .filter(Boolean) as AssetUI[]
+  }
+
   const fetchAssets = async () => {
     try {
       const response = await fetch("/api/assets")
       const data = await response.json()
-      setAssets(data)
+
+      const normalized = normalizeAssets(Array.isArray(data) ? data : [])
+      setAssets(normalized)
+
+      // Si algo viene sin id, lo avisamos
+      const missing = (Array.isArray(data) ? data : []).filter((a: any) => !(a?.asset_id || a?.id))
+      if (missing.length > 0) {
+        console.warn("[v0] Assets sin asset_id/id:", missing)
+      }
     } catch (error) {
       console.error("[v0] Error fetching assets:", error)
       toast({
@@ -77,9 +123,11 @@ export default function AssetsPage() {
       const response = await fetch("/api/door/status")
       const data = await response.json()
       const statusMap: Record<string, DoorStatus> = {}
-      data.forEach((status: DoorStatus) => {
-        statusMap[status.door_id] = status
-      })
+
+        ; (Array.isArray(data) ? data : []).forEach((status: DoorStatus) => {
+          statusMap[status.door_id] = status
+        })
+
       setDoorStatuses(statusMap)
     } catch (error) {
       console.error("[v0] Error fetching door statuses:", error)
@@ -93,7 +141,6 @@ export default function AssetsPage() {
     }
     loadData()
 
-    // Actualizar estados cada 5 segundos
     const interval = setInterval(fetchDoorStatuses, 5000)
     return () => clearInterval(interval)
   }, [])
@@ -102,8 +149,15 @@ export default function AssetsPage() {
     e.preventDefault()
 
     try {
-      const url = editingAsset ? `/api/assets/${editingAsset.id}` : "/api/assets"
-      const method = editingAsset ? "PUT" : "POST"
+      const isEditing = !!editingAsset
+      const assetId = editingAsset?.asset_id
+
+      const url = isEditing ? `/api/assets/${assetId}` : "/api/assets"
+      const method = isEditing ? "PUT" : "POST"
+
+      if (isEditing && !assetId) {
+        throw new Error("No se encontró asset_id para editar (evitando /api/assets/undefined).")
+      }
 
       const response = await fetch(url, {
         method,
@@ -111,13 +165,16 @@ export default function AssetsPage() {
         body: JSON.stringify(formData),
       })
 
+      const payload = await response.json().catch(() => null)
+
       if (!response.ok) {
-        throw new Error("Error al guardar el activo")
+        const msg = payload?.error ?? "Error al guardar el activo"
+        throw new Error(msg)
       }
 
       toast({
         title: "Éxito",
-        description: editingAsset ? "Activo actualizado correctamente" : "Activo creado correctamente",
+        description: isEditing ? "Activo actualizado correctamente" : "Activo creado correctamente",
       })
 
       setDialogOpen(false)
@@ -132,7 +189,7 @@ export default function AssetsPage() {
     }
   }
 
-  const handleEdit = (asset: Asset) => {
+  const handleEdit = (asset: AssetUI) => {
     setEditingAsset(asset)
     setFormData({
       door_id: asset.door_id,
@@ -144,16 +201,28 @@ export default function AssetsPage() {
     setDialogOpen(true)
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (assetId: string) => {
+    if (!assetId) {
+      toast({
+        title: "Error",
+        description: "asset_id vacío (evitando /api/assets/undefined).",
+        variant: "destructive",
+      })
+      return
+    }
+
     if (!confirm("¿Estás seguro de eliminar este activo?")) return
 
     try {
-      const response = await fetch(`/api/assets/${id}`, {
+      const response = await fetch(`/api/assets/${assetId}`, {
         method: "DELETE",
       })
 
+      const payload = await response.json().catch(() => null)
+
       if (!response.ok) {
-        throw new Error("Error al eliminar el activo")
+        const msg = payload?.error ?? "Error al eliminar el activo"
+        throw new Error(msg)
       }
 
       toast({
@@ -165,7 +234,7 @@ export default function AssetsPage() {
     } catch (error) {
       toast({
         title: "Error",
-        description: "No se pudo eliminar el activo",
+        description: error instanceof Error ? error.message : "No se pudo eliminar el activo",
         variant: "destructive",
       })
     }
@@ -184,14 +253,11 @@ export default function AssetsPage() {
 
   const getStatusIndicator = (doorId: string) => {
     const status = doorStatuses[doorId]
-    if (!status) {
-      return <Badge variant="secondary">Sin datos</Badge>
-    }
+    if (!status) return <Badge variant="secondary">Sin datos</Badge>
+
     return (
       <div className="flex items-center gap-2">
-        <Circle
-          className={`h-3 w-3 ${status.is_open ? "fill-red-500 text-red-500" : "fill-green-500 text-green-500"}`}
-        />
+        <Circle className={`h-3 w-3 ${status.is_open ? "fill-red-500 text-red-500" : "fill-green-500 text-green-500"}`} />
         <Badge variant={status.is_open ? "destructive" : "default"}>{status.is_open ? "Abierta" : "Cerrada"}</Badge>
       </div>
     )
@@ -227,6 +293,7 @@ export default function AssetsPage() {
                 <CardTitle>Activos Registrados</CardTitle>
                 <CardDescription>Lista de todos los activos conectados al sistema</CardDescription>
               </div>
+
               <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                 <DialogTrigger asChild>
                   <Button onClick={resetForm}>
@@ -234,6 +301,7 @@ export default function AssetsPage() {
                     Nuevo Activo
                   </Button>
                 </DialogTrigger>
+
                 <DialogContent className="max-w-2xl">
                   <form onSubmit={handleSubmit}>
                     <DialogHeader>
@@ -242,6 +310,7 @@ export default function AssetsPage() {
                         {editingAsset ? "Modifica los datos del activo" : "Agrega un nuevo activo al sistema"}
                       </DialogDescription>
                     </DialogHeader>
+
                     <div className="grid gap-4 py-4">
                       <div className="grid gap-2">
                         <Label htmlFor="door_id">ID del Activo *</Label>
@@ -254,6 +323,7 @@ export default function AssetsPage() {
                           disabled={!!editingAsset}
                         />
                       </div>
+
                       <div className="grid gap-2">
                         <Label htmlFor="custom_name">Nombre Personalizado *</Label>
                         <Input
@@ -264,6 +334,7 @@ export default function AssetsPage() {
                           required
                         />
                       </div>
+
                       <div className="grid gap-2">
                         <Label htmlFor="location">Ubicación *</Label>
                         <Input
@@ -274,6 +345,7 @@ export default function AssetsPage() {
                           required
                         />
                       </div>
+
                       <div className="grid gap-2">
                         <Label htmlFor="board_name">Nombre del Tablero</Label>
                         <Input
@@ -283,6 +355,7 @@ export default function AssetsPage() {
                           placeholder="ESP32-MAIN-01"
                         />
                       </div>
+
                       <div className="grid gap-2">
                         <Label htmlFor="description">Descripción</Label>
                         <Textarea
@@ -294,6 +367,7 @@ export default function AssetsPage() {
                         />
                       </div>
                     </div>
+
                     <DialogFooter>
                       <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                         Cancelar
@@ -305,6 +379,7 @@ export default function AssetsPage() {
               </Dialog>
             </div>
           </CardHeader>
+
           <CardContent>
             <Table>
               <TableHeader>
@@ -318,9 +393,10 @@ export default function AssetsPage() {
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
+
               <TableBody>
                 {assets.map((asset) => (
-                  <TableRow key={asset.id}>
+                  <TableRow key={asset.asset_id}>
                     <TableCell>{getStatusIndicator(asset.door_id)}</TableCell>
                     <TableCell className="font-medium">{asset.custom_name}</TableCell>
                     <TableCell className="font-mono text-sm">{asset.door_id}</TableCell>
@@ -334,13 +410,14 @@ export default function AssetsPage() {
                         <Button variant="ghost" size="sm" onClick={() => handleEdit(asset)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(asset.id)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleDelete(asset.asset_id)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
+
                 {assets.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
