@@ -5,11 +5,12 @@ export async function GET() {
   try {
     const supabase = await createClient()
 
-    // 1) Traer assets activos
+    // 1) Traer assets activos tipo 'door' (excluye generadores)
     const { data: assets, error: assetsError } = await supabase
       .from("assets")
       .select("*")
       .eq("active", true)
+      .eq("asset_type", "door")
       .order("custom_name")
 
     if (assetsError) throw assetsError

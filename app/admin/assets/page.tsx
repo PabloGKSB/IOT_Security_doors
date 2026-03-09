@@ -273,14 +273,21 @@ export default function AssetsPage() {
     setEditingAsset(null)
   }
 
-  const getStatusIndicator = (doorId: string) => {
-    const status = doorStatuses[doorId]
-    if (!status) return <Badge variant="secondary">Sin datos</Badge>
+  const getStatusIndicator = (asset: AssetUI) => {
+    const status = doorStatuses[asset.door_id]
+    const isGenerator = asset.asset_type === "generator"
+
+    if (!status) return <Badge variant="secondary">{isGenerator ? "Sin señal" : "Sin datos"}</Badge>
 
     return (
       <div className="flex items-center gap-2">
         <Circle className={`h-3 w-3 ${status.is_open ? "fill-red-500 text-red-500" : "fill-green-500 text-green-500"}`} />
-        <Badge variant={status.is_open ? "destructive" : "default"}>{status.is_open ? "Abierta" : "Cerrada"}</Badge>
+        <Badge variant={status.is_open ? "destructive" : "default"}>
+          {isGenerator
+            ? status.is_open ? "Encendido" : "Apagado"
+            : status.is_open ? "Abierta" : "Cerrada"
+          }
+        </Badge>
       </div>
     )
   }
@@ -475,7 +482,7 @@ export default function AssetsPage() {
               <TableBody>
                 {assets.map((asset) => (
                   <TableRow key={asset.door_id}>
-                    <TableCell>{getStatusIndicator(asset.door_id)}</TableCell>
+                    <TableCell>{getStatusIndicator(asset)}</TableCell>
                     <TableCell className="font-medium">{asset.custom_name}</TableCell>
                     <TableCell className="font-mono text-sm">{asset.door_id}</TableCell>
                     <TableCell>{asset.location}</TableCell>
