@@ -14,7 +14,11 @@ import { createClient } from "@/lib/supabase/server"
  * - fuel_remaining_liters: combustible restante estimado
  * - fuel_remaining_pct: porcentaje restante
  * - fuel_alert: true si está bajo el umbral
- * - last_event_at: timestamp del último evento power_up/power_down
+ * - last_event_at: timestamp del último evento
+ *
+ * Acepta eventos del ESP32 en dos modalidades sin cambiar firmware:
+ *   open / power_up  → generador ENCENDIDO
+ *   close / power_down → generador APAGADO
  */
 
 const PAUSE_TOLERANCE_MIN = 30 // Req #7: pausa ≤ 30 min no reinicia el contador
@@ -49,14 +53,15 @@ export async function GET(request: Request) {
             )
         }
 
-        // 2. Obtener eventos power_up/power_down desde la última recarga
+        // 2. Obtener eventos del generador desde la última recarga
+        // Acepta tanto open/close (relay) como power_up/power_down (boot ESP32)
         const since = asset.last_refill_at ?? "2000-01-01T00:00:00Z"
 
         const { data: events, error: eventsError } = await supabase
             .from("door_events")
             .select("event_type, timestamp")
             .eq("door_id", board_id)
-            .in("event_type", ["power_up", "power_down"])
+            .in("event_type", ["open", "close", "power_up", "power_down"])
             .gte("timestamp", since)
             .order("timestamp", { ascending: true })
 
@@ -70,8 +75,12 @@ export async function GET(request: Request) {
 
         for (const ev of events ?? []) {
             const ts = new Date(ev.timestamp).getTime()
+            // 'open' o 'power_up' = generador encendido
+            const isOnEvent = ev.event_type === "power_up" || ev.event_type === "open"
+            // 'close' o 'power_down' = generador apagado
+            const isOffEvent = ev.event_type === "power_down" || ev.event_type === "close"
 
-            if (ev.event_type === "power_up") {
+            if (isOnEvent) {
                 // Si hubo un apagado reciente (≤ 30 min), continuar la sesión
                 if (lastDownMs !== null && (ts - lastDownMs) / 60000 <= PAUSE_TOLERANCE_MIN) {
                     // Continuar — no reiniciar sessionStart
@@ -81,7 +90,7 @@ export async function GET(request: Request) {
                 }
                 lastDownMs = null
                 isOn = true
-            } else if (ev.event_type === "power_down") {
+            } else if (isOffEvent) {
                 if (sessionStartMs !== null) {
                     totalMinutes += (ts - sessionStartMs) / 60000
                     sessionStartMs = null
