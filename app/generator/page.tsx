@@ -185,7 +185,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             setRefilling(false)
         }
     }
-
+    //jfhejwgfwgfwef
     const isOn = status?.is_on ?? false
     const fuelPct = status?.fuel_remaining_pct ?? 100
     const fuelAlert = status?.fuel_alert ?? false
