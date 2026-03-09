@@ -16,7 +16,7 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { ArrowLeft, Settings, RefreshCw } from "lucide-react"
+import { ArrowLeft, Settings, RefreshCw, FlaskConical, Mail } from "lucide-react"
 import Link from "next/link"
 
 interface GeneratorAsset {
@@ -130,6 +130,8 @@ function FuelGauge({ pct, alert }: { pct: number; alert: boolean }) {
 function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
     const [status, setStatus] = useState<GeneratorStatus | null>(null)
     const [refilling, setRefilling] = useState(false)
+    const [sendingAlert, setSendingAlert] = useState(false)
+    const [alertSentAt, setAlertSentAt] = useState<number | null>(null) // timestamp del último envío automático
     const [pulse, setPulse] = useState(false)
     const { toast } = useToast()
 
@@ -174,6 +176,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             const data = await res.json()
             if (!res.ok) throw new Error(data.error)
             toast({ title: "✅ Combustible recargado", description: "Contador reiniciado." })
+            setAlertSentAt(null) // Resetear alerta al recargar
             await fetchStatus()
         } catch (e) {
             toast({
@@ -185,7 +188,47 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             setRefilling(false)
         }
     }
-    //jfhejwgfwgfwef
+
+    const sendFuelAlert = async (isTest = false) => {
+        setSendingAlert(true)
+        try {
+            const res = await fetch("/api/generator/alert", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    board_id: asset.door_id,
+                    alert_type: isTest ? "test" : "fuel_low",
+                }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error)
+            toast({
+                title: isTest ? "🧪 Simulación enviada" : "⛽ Alerta de combustible enviada",
+                description: `Email enviado a ${data.sent_to} contacto(s).`,
+            })
+            if (!isTest) setAlertSentAt(Date.now())
+        } catch (e) {
+            toast({
+                title: "Error al enviar alerta",
+                description: e instanceof Error ? e.message : "No se pudo enviar el email.",
+                variant: "destructive",
+            })
+        } finally {
+            setSendingAlert(false)
+        }
+    }
+
+    // Auto-enviar alerta cuando fuel_alert pasa a true (máx. 1 vez por hora)
+    useEffect(() => {
+        if (!status?.fuel_alert) return
+        const ONE_HOUR_MS = 60 * 60 * 1000
+        const alreadySent = alertSentAt && (Date.now() - alertSentAt) < ONE_HOUR_MS
+        if (!alreadySent) {
+            sendFuelAlert(false)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [status?.fuel_alert])
+
     const isOn = status?.is_on ?? false
     const fuelPct = status?.fuel_remaining_pct ?? 100
     const fuelAlert = status?.fuel_alert ?? false
@@ -270,41 +313,81 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                 </div>
             )}
 
-            {/* Footer: última recarga + botón */}
-            <div className="px-6 pb-5 pt-2 border-t border-slate-700 mt-auto flex items-center justify-between gap-3">
+            {/* Footer: última recarga + botones */}
+            <div className="px-6 pb-5 pt-3 border-t border-slate-700 mt-auto space-y-2">
                 <p className="text-xs text-slate-500 truncate">
                     {status?.last_refill_at
                         ? `Recarga: ${new Date(status.last_refill_at).toLocaleString("es-CL")}`
                         : "Sin recarga registrada"}
                 </p>
-                <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={refilling}
-                            className="shrink-0 border-slate-600 text-slate-300 hover:border-green-500 hover:text-green-400 text-xs"
-                        >
-                            <RefreshCw className="h-3 w-3 mr-1.5" />
-                            {refilling ? "Registrando..." : "Rellenar"}
-                        </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                        <AlertDialogHeader>
-                            <AlertDialogTitle>¿Confirmar recarga?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                Esto registrará una recarga y reiniciará el contador de combustible para{" "}
-                                <strong>{asset.custom_name}</strong>.
-                            </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleRefill} disabled={refilling}>
-                                Confirmar
-                            </AlertDialogAction>
-                        </AlertDialogFooter>
-                    </AlertDialogContent>
-                </AlertDialog>
+                <div className="flex gap-2">
+                    {/* Botón rellenar combustible */}
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={refilling}
+                                className="flex-1 border-slate-600 text-slate-300 hover:border-green-500 hover:text-green-400 text-xs"
+                            >
+                                <RefreshCw className="h-3 w-3 mr-1.5" />
+                                {refilling ? "Registrando..." : "Rellenar"}
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>¿Confirmar recarga?¿</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    Esto registrará una recarga y reiniciará el contador de combustible para{" "}
+                                    <strong>{asset.custom_name}</strong>.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={handleRefill} disabled={refilling}>
+                                    Confirmar
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
+
+                    {/* Botón simular alerta por email */}
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={sendingAlert}
+                                className="flex-1 border-slate-600 text-slate-300 hover:border-amber-500 hover:text-amber-400 text-xs"
+                                title="Simula una alerta de combustible bajo y envía el email"
+                            >
+                                <FlaskConical className="h-3 w-3 mr-1.5" />
+                                {sendingAlert ? "Enviando..." : "Simular Alerta"}
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>🧪 Simulación de Alerta</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    Esto envía un email de prueba simulando combustible al 15% para{" "}
+                                    <strong>{asset.custom_name}</strong>. Todos los contactos activos
+                                    recibirán el correo marcado como «SIMULACIÓN».
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction
+                                    onClick={() => sendFuelAlert(true)}
+                                    disabled={sendingAlert}
+                                    className="bg-amber-600 hover:bg-amber-700"
+                                >
+                                    <Mail className="h-4 w-4 mr-2" />
+                                    Enviar Email de Prueba
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
+                </div>
             </div>
         </div>
     )
