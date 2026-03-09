@@ -5,7 +5,7 @@ import { ManualEventForm } from "@/components/manual-event-form"
 import { UserNav } from "@/components/user-nav"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Settings } from "lucide-react"
+import { Settings, Zap } from "lucide-react"
 import Link from "next/link"
 
 export default function HomePage() {
@@ -14,11 +14,17 @@ export default function HomePage() {
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">{"Control de activos criticos\n"}</h1>
+            <h1 className="text-3xl font-bold">Tableros de Control</h1>
             <p className="text-muted-foreground mt-1">Monitoreo en tiempo real - Sucursales Chile</p>
           </div>
           <div className="flex items-center gap-2">
             <ManualEventForm />
+            <Link href="/generator">
+              <Button variant="outline" size="sm">
+                <Zap className="mr-2 h-4 w-4" />
+                Generadores
+              </Button>
+            </Link>
             <Link href="/admin">
               <Button variant="outline" size="sm">
                 <Settings className="mr-2 h-4 w-4" />

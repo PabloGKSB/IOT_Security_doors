@@ -23,28 +23,36 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Plus, Pencil, Trash2, Circle } from "lucide-react"
 import Link from "next/link"
 
+type AssetType = "door" | "generator"
+
 type AssetApi = {
-  id?: string // UUID (interno BD)
-  door_id: string // ID ESP32 (externo / operacional)
+  id?: string
+  door_id: string
   custom_name: string
   location: string
   board_name: string | null
   description: string | null
   active: boolean
+  asset_type?: AssetType
+  fuel_capacity_liters?: number | null
+  fuel_consumption_lph?: number | null
+  fuel_alert_threshold_pct?: number | null
   created_at: string
   updated_at: string
 }
 
 type AssetUI = {
-  // Conservamos uuid por si lo quieres mostrar o usar después, pero NO lo usamos para editar
   id?: string
   door_id: string
-
   custom_name: string
   location: string
   board_name: string | null
   description: string | null
   active: boolean
+  asset_type: AssetType
+  fuel_capacity_liters: number | null
+  fuel_consumption_lph: number | null
+  fuel_alert_threshold_pct: number | null
   created_at: string
   updated_at: string
 }
@@ -67,6 +75,10 @@ export default function AssetsPage() {
     location: "",
     board_name: "",
     description: "",
+    asset_type: "door" as "door" | "generator",
+    fuel_capacity_liters: "",
+    fuel_consumption_lph: "",
+    fuel_alert_threshold_pct: "20",
   })
   const { toast } = useToast()
 
@@ -91,6 +103,10 @@ export default function AssetsPage() {
           board_name: a.board_name ?? null,
           description: a.description ?? null,
           active: !!a.active,
+          asset_type: (a.asset_type ?? "door") as "door" | "generator",
+          fuel_capacity_liters: a.fuel_capacity_liters ?? null,
+          fuel_consumption_lph: a.fuel_consumption_lph ?? null,
+          fuel_alert_threshold_pct: a.fuel_alert_threshold_pct ?? null,
           created_at: a.created_at,
           updated_at: a.updated_at,
         }))
@@ -194,6 +210,10 @@ export default function AssetsPage() {
       location: asset.location,
       board_name: asset.board_name || "",
       description: asset.description || "",
+      asset_type: asset.asset_type ?? "door",
+      fuel_capacity_liters: asset.fuel_capacity_liters?.toString() ?? "",
+      fuel_consumption_lph: asset.fuel_consumption_lph?.toString() ?? "",
+      fuel_alert_threshold_pct: asset.fuel_alert_threshold_pct?.toString() ?? "20",
     })
     setDialogOpen(true)
   }
@@ -245,6 +265,10 @@ export default function AssetsPage() {
       location: "",
       board_name: "",
       description: "",
+      asset_type: "door",
+      fuel_capacity_liters: "",
+      fuel_consumption_lph: "",
+      fuel_alert_threshold_pct: "20",
     })
     setEditingAsset(null)
   }
@@ -364,6 +388,62 @@ export default function AssetsPage() {
                           rows={3}
                         />
                       </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="asset_type">Tipo de Activo *</Label>
+                        <select
+                          id="asset_type"
+                          value={formData.asset_type}
+                          onChange={(e) => setFormData({ ...formData, asset_type: e.target.value as "door" | "generator" })}
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                        >
+                          <option value="door">Tablero (Puerta)</option>
+                          <option value="generator">Generador</option>
+                        </select>
+                      </div>
+
+                      {formData.asset_type === "generator" && (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-2">
+                              <Label htmlFor="fuel_capacity_liters">Capacidad Estanque (L)</Label>
+                              <Input
+                                id="fuel_capacity_liters"
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={formData.fuel_capacity_liters}
+                                onChange={(e) => setFormData({ ...formData, fuel_capacity_liters: e.target.value })}
+                                placeholder="200"
+                              />
+                            </div>
+                            <div className="grid gap-2">
+                              <Label htmlFor="fuel_consumption_lph">Consumo (L/hora)</Label>
+                              <Input
+                                id="fuel_consumption_lph"
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={formData.fuel_consumption_lph}
+                                onChange={(e) => setFormData({ ...formData, fuel_consumption_lph: e.target.value })}
+                                placeholder="12.5"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-2">
+                            <Label htmlFor="fuel_alert_threshold_pct">Alerta de combustible bajo (%)</Label>
+                            <Input
+                              id="fuel_alert_threshold_pct"
+                              type="number"
+                              min="0"
+                              max="100"
+                              value={formData.fuel_alert_threshold_pct}
+                              onChange={(e) => setFormData({ ...formData, fuel_alert_threshold_pct: e.target.value })}
+                              placeholder="20"
+                            />
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     <DialogFooter>
