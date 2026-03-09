@@ -28,22 +28,42 @@ export async function POST(request: Request) {
     const supabase = await createClient()
     const body = await request.json()
 
-    const { door_id, custom_name, location, board_name, description } = body
+    const {
+      door_id,
+      custom_name,
+      location,
+      board_name,
+      description,
+      asset_type,
+      fuel_capacity_liters,
+      fuel_consumption_lph,
+      fuel_alert_threshold_pct,
+    } = body
 
     if (!door_id || !custom_name || !location) {
       return NextResponse.json({ error: "Faltan campos requeridos" }, { status: 400 })
     }
 
+    const insertData: Record<string, unknown> = {
+      door_id,
+      custom_name,
+      location,
+      board_name: board_name || null,
+      description: description || null,
+      active: true,
+      asset_type: asset_type ?? "door",
+    }
+
+    if (fuel_capacity_liters !== undefined && fuel_capacity_liters !== "")
+      insertData.fuel_capacity_liters = Number(fuel_capacity_liters)
+    if (fuel_consumption_lph !== undefined && fuel_consumption_lph !== "")
+      insertData.fuel_consumption_lph = Number(fuel_consumption_lph)
+    if (fuel_alert_threshold_pct !== undefined && fuel_alert_threshold_pct !== "")
+      insertData.fuel_alert_threshold_pct = Number(fuel_alert_threshold_pct)
+
     const { data, error } = await supabase
       .from("assets")
-      .insert({
-        door_id,
-        custom_name,
-        location,
-        board_name,
-        description,
-        active: true,
-      })
+      .insert(insertData)
       .select()
       .single()
 

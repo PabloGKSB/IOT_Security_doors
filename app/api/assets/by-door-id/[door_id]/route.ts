@@ -38,12 +38,26 @@ export async function PUT(
             )
         }
 
-        const { custom_name, location, board_name, description, active } = body as {
+        const {
+            custom_name,
+            location,
+            board_name,
+            description,
+            active,
+            asset_type,
+            fuel_capacity_liters,
+            fuel_consumption_lph,
+            fuel_alert_threshold_pct,
+        } = body as {
             custom_name?: string
             location?: string
             board_name?: string
             description?: string
             active?: boolean
+            asset_type?: "door" | "generator"
+            fuel_capacity_liters?: number | string
+            fuel_consumption_lph?: number | string
+            fuel_alert_threshold_pct?: number | string
         }
 
         const updateData: Record<string, any> = {}
@@ -52,6 +66,13 @@ export async function PUT(
         if (board_name !== undefined) updateData.board_name = board_name
         if (description !== undefined) updateData.description = description
         if (active !== undefined) updateData.active = active
+        if (asset_type !== undefined) updateData.asset_type = asset_type
+        if (fuel_capacity_liters !== undefined && fuel_capacity_liters !== "")
+            updateData.fuel_capacity_liters = Number(fuel_capacity_liters)
+        if (fuel_consumption_lph !== undefined && fuel_consumption_lph !== "")
+            updateData.fuel_consumption_lph = Number(fuel_consumption_lph)
+        if (fuel_alert_threshold_pct !== undefined && fuel_alert_threshold_pct !== "")
+            updateData.fuel_alert_threshold_pct = Number(fuel_alert_threshold_pct)
         updateData.updated_at = new Date().toISOString()
 
         // Si viene todo vacío, avisamos explícito
