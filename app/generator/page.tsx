@@ -132,6 +132,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
     const [refilling, setRefilling] = useState(false)
     const [sendingAlert, setSendingAlert] = useState(false)
     const [alertSentAt, setAlertSentAt] = useState<number | null>(null) // timestamp del último envío automático
+    const [simulatedFuel, setSimulatedFuel] = useState<number>(15) // Rango para la simulación
     const [pulse, setPulse] = useState(false)
     const { toast } = useToast()
 
@@ -189,7 +190,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
         }
     }
 
-    const sendFuelAlert = async (isTest = false) => {
+    const sendFuelAlert = async (isTest = false, pct = 15) => {
         setSendingAlert(true)
         try {
             const res = await fetch("/api/generator/alert", {
@@ -198,6 +199,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                 body: JSON.stringify({
                     board_id: asset.door_id,
                     alert_type: isTest ? "test" : "fuel_low",
+                    simulated_pct: pct,
                 }),
             })
             const data = await res.json()
@@ -368,16 +370,40 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                         <AlertDialogContent>
                             <AlertDialogHeader>
                                 <AlertDialogTitle>🧪 Simulación de Alerta</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                    Esto envía un email de prueba simulando combustible al 15% para{" "}
-                                    <strong>{asset.custom_name}</strong>. Todos los contactos activos
-                                    recibirán el correo marcado como «SIMULACIÓN».
+                                <AlertDialogDescription asChild>
+                                    <div className="space-y-4 mt-2">
+                                        <p>
+                                            Envía un email de prueba para <strong>{asset.custom_name}</strong>. Todos los contactos activos
+                                            recibirán la alerta marcada como «SIMULACIÓN».
+                                        </p>
+                                        
+                                        <div className="space-y-3 pt-3">
+                                            <div className="flex justify-between items-center text-sm font-medium">
+                                                <label htmlFor="fuel-slider">Nivel de combustible a simular:</label>
+                                                <span className={`px-2 py-0.5 rounded ${simulatedFuel <= (asset.fuel_alert_threshold_pct ?? 20) ? "bg-red-500/20 text-red-500" : "bg-green-500/20 text-green-500"}`}>
+                                                    {simulatedFuel}%
+                                                </span>
+                                            </div>
+                                            <input 
+                                                id="fuel-slider"
+                                                type="range" 
+                                                min="0" 
+                                                max="100" 
+                                                value={simulatedFuel}
+                                                onChange={(e) => setSimulatedFuel(Number(e.target.value))}
+                                                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 accent-amber-500"
+                                            />
+                                            <p className="text-xs text-slate-500">
+                                                Umbral de alerta real configurado: <strong>{asset.fuel_alert_threshold_pct ?? 20}%</strong>
+                                            </p>
+                                        </div>
+                                    </div>
                                 </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                 <AlertDialogAction
-                                    onClick={() => sendFuelAlert(true)}
+                                    onClick={() => sendFuelAlert(true, simulatedFuel)}
                                     disabled={sendingAlert}
                                     className="bg-amber-600 hover:bg-amber-700"
                                 >

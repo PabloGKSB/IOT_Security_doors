@@ -13,9 +13,10 @@ export async function POST(request: Request) {
         const supabase = await createClient()
 
         const body = await request.json()
-        const { board_id, alert_type = "fuel_low" } = body as {
+        const { board_id, alert_type = "fuel_low", simulated_pct = 15 } = body as {
             board_id: string
             alert_type?: "fuel_low" | "test"
+            simulated_pct?: number
         }
 
         if (!board_id) {
@@ -40,8 +41,8 @@ export async function POST(request: Request) {
         const status = await statusRes.json()
 
         const isTest = alert_type === "test"
-        const fuelPct = isTest ? 15 : (status?.fuel_remaining_pct ?? 0)
-        const fuelRemaining = isTest ? (asset.fuel_capacity_liters ?? 0) * 0.15 : (status?.fuel_remaining_liters ?? 0)
+        const fuelPct = isTest ? simulated_pct : (status?.fuel_remaining_pct ?? 0)
+        const fuelRemaining = isTest ? (asset.fuel_capacity_liters ?? 0) * (simulated_pct / 100) : (status?.fuel_remaining_liters ?? 0)
         const totalHours = isTest ? 12 : Math.round((status?.total_minutes_since_refill ?? 0) / 60)
 
         const subject = isTest
