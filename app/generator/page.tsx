@@ -54,7 +54,7 @@ function formatMinutes(min: number): string {
 }
 
 // Gauge SVG semicircular
-function FuelGauge({ pct, alert }: { pct: number; alert: boolean }) {
+function FuelGauge({ pct, alert, onChange }: { pct: number; alert: boolean; onChange?: (val: number) => void }) {
     const clamp = Math.min(100, Math.max(0, pct))
     // Ángulo: 0% = -135deg, 100% = +135deg → rango 270deg
     const angle = -135 + (clamp / 100) * 270
@@ -84,7 +84,8 @@ function FuelGauge({ pct, alert }: { pct: number; alert: boolean }) {
     const fillEnd = -135 + (clamp / 100) * 270
 
     return (
-        <svg viewBox="0 0 200 130" className="w-full max-w-[280px] mx-auto drop-shadow-lg">
+        <div className="relative w-full max-w-[280px] mx-auto drop-shadow-lg">
+            <svg viewBox="0 0 200 130" className="w-full">
             {/* Arco fondo */}
             <path
                 d={describeArc(-135, 135)}
@@ -124,6 +125,18 @@ function FuelGauge({ pct, alert }: { pct: number; alert: boolean }) {
                 {clamp}%
             </text>
         </svg>
+        {onChange && (
+            <input
+                type="range"
+                min="0"
+                max="100"
+                value={clamp}
+                onChange={(e) => onChange(Number(e.target.value))}
+                className="absolute bottom-2 left-[5%] w-[90%] h-16 opacity-0 cursor-pointer z-10"
+                title="Arrastra para ajustar el nivel"
+            />
+        )}
+        </div>
     )
 }
 
@@ -377,23 +390,20 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                                             recibirán la alerta marcada como «SIMULACIÓN».
                                         </p>
                                         
-                                        <div className="space-y-3 pt-3">
-                                            <div className="flex justify-between items-center text-sm font-medium">
-                                                <label htmlFor="fuel-slider">Nivel de combustible a simular:</label>
-                                                <span className={`px-2 py-0.5 rounded ${simulatedFuel <= (asset.fuel_alert_threshold_pct ?? 20) ? "bg-red-500/20 text-red-500" : "bg-green-500/20 text-green-500"}`}>
-                                                    {simulatedFuel}%
-                                                </span>
+                                        <div className="space-y-1 pt-2 pb-4">
+                                            <p className="text-center text-sm font-medium mb-4 text-slate-300">
+                                                Arrastra gráficamente el nivel de combustible a simular:
+                                            </p>
+                                            
+                                            <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 relative overflow-hidden">
+                                                <FuelGauge 
+                                                    pct={simulatedFuel} 
+                                                    alert={simulatedFuel <= (asset.fuel_alert_threshold_pct ?? 20)} 
+                                                    onChange={setSimulatedFuel} 
+                                                />
                                             </div>
-                                            <input 
-                                                id="fuel-slider"
-                                                type="range" 
-                                                min="0" 
-                                                max="100" 
-                                                value={simulatedFuel}
-                                                onChange={(e) => setSimulatedFuel(Number(e.target.value))}
-                                                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 accent-amber-500"
-                                            />
-                                            <p className="text-xs text-slate-500">
+                                            
+                                            <p className="text-xs text-center text-slate-500 pt-3">
                                                 Umbral de alerta real configurado: <strong>{asset.fuel_alert_threshold_pct ?? 20}%</strong>
                                             </p>
                                         </div>
