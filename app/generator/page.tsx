@@ -146,6 +146,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
     const [sendingAlert, setSendingAlert] = useState(false)
     const [alertSentAt, setAlertSentAt] = useState<number | null>(null) // timestamp del último envío automático
     const [simulatedFuel, setSimulatedFuel] = useState<number>(15) // Rango para la simulación
+    const [overridePct, setOverridePct] = useState<number | null>(null) // Muestra la simulación en el dashboard real
     const [pulse, setPulse] = useState(false)
     const { toast } = useToast()
 
@@ -191,6 +192,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             if (!res.ok) throw new Error(data.error)
             toast({ title: "✅ Combustible recargado", description: "Contador reiniciado." })
             setAlertSentAt(null) // Resetear alerta al recargar
+            setOverridePct(null) // Quitar simulación si recargan
             await fetchStatus()
         } catch (e) {
             toast({
@@ -233,21 +235,30 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
         }
     }
 
-    // Auto-enviar alerta cuando fuel_alert pasa a true (máx. 1 vez por hora)
+    const displayPct = overridePct !== null ? overridePct : (status?.fuel_remaining_pct ?? 100)
+    const displayAlert = overridePct !== null
+        ? displayPct <= (asset.fuel_alert_threshold_pct ?? 20)
+        : (status?.fuel_alert ?? false)
+
+    // Auto-enviar alerta cuando displayAlert pasa a true (máx. 1 vez por hora)
     useEffect(() => {
-        if (!status?.fuel_alert) return
+        if (!displayAlert) return
         const ONE_HOUR_MS = 60 * 60 * 1000
         const alreadySent = alertSentAt && (Date.now() - alertSentAt) < ONE_HOUR_MS
         if (!alreadySent) {
-            sendFuelAlert(false)
+            // Si estamos simulando, enviamos la alerta como test
+            sendFuelAlert(overridePct !== null, displayPct)
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [status?.fuel_alert])
+    }, [displayAlert, overridePct])
 
     const isOn = status?.is_on ?? false
-    const fuelPct = status?.fuel_remaining_pct ?? 100
-    const fuelAlert = status?.fuel_alert ?? false
     const hasConfig = (asset.fuel_capacity_liters ?? 0) > 0
+
+    // Para calcular los litros si estamos simulando
+    const displayRemainingLiters = overridePct !== null
+        ? ((asset.fuel_capacity_liters ?? 0) * (overridePct / 100))
+        : (status?.fuel_remaining_liters ?? 0)
 
     return (
         <div
@@ -269,6 +280,11 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                 <div>
                     <p className="text-xs font-mono text-slate-400 uppercase tracking-widest mb-1">{asset.location}</p>
                     <h2 className="text-2xl font-bold text-white leading-tight">{asset.custom_name}</h2>
+                    {overridePct !== null && (
+                        <Badge className="mt-2 bg-amber-500/20 text-amber-500 hover:bg-amber-500/30 border border-amber-500/50">
+                            Modo Simulación Activo
+                        </Badge>
+                    )}
                 </div>
                 <div className={`
           flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wide
@@ -287,16 +303,16 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             {hasConfig ? (
                 <div className="px-6 pb-2">
                     <p className="text-xs text-slate-400 text-center mb-1 uppercase tracking-widest">Nivel de Combustible</p>
-                    <FuelGauge pct={fuelPct} alert={fuelAlert} />
-                    {fuelAlert && (
+                    <FuelGauge pct={displayPct} alert={displayAlert} />
+                    {displayAlert && (
                         <div className="mt-2 text-center">
                             <Badge className="bg-red-500/20 border border-red-500 text-red-400 animate-pulse text-xs px-3 py-1">
                                 ⚠ COMBUSTIBLE BAJO — REQUIERE RECARGA
                             </Badge>
                         </div>
                     )}
-                    <div className="flex justify-between text-xs text-slate-400 mt-3 px-2">
-                        <span>Restante: <span className="text-white font-medium">{status?.fuel_remaining_liters ?? "—"}L</span></span>
+                    <div className="flex justify-between text-xs text-slate-400 mt-3 px-2 transition-all">
+                        <span>Restante: <span className="text-white font-medium">{Math.round(displayRemainingLiters * 10) / 10}L</span></span>
                         <span>Capacidad: <span className="text-white font-medium">{asset.fuel_capacity_liters}L</span></span>
                     </div>
                 </div>
@@ -343,10 +359,10 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                                 size="sm"
                                 variant="outline"
                                 disabled={refilling}
-                                className="flex-1 border-slate-600 text-slate-300 hover:border-green-500 hover:text-green-400 text-xs"
+                                className="flex-1 border-slate-600 text-slate-300 hover:border-green-500 hover:text-green-400 text-xs flex-col items-center py-5"
                             >
-                                <RefreshCw className="h-3 w-3 mr-1.5" />
-                                {refilling ? "Registrando..." : "Rellenar"}
+                                <RefreshCw className="h-4 w-4 mb-1" />
+                                <span className="text-[10px] uppercase tracking-wider">{refilling ? "Registrando..." : "Rellenar"}</span>
                             </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
@@ -367,62 +383,79 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                     </AlertDialog>
 
                     {/* Botón simular alerta por email */}
-                    <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                            <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={sendingAlert}
-                                className="flex-1 border-slate-600 text-slate-300 hover:border-amber-500 hover:text-amber-400 text-xs"
-                                title="Simula una alerta de combustible bajo y envía el email"
-                            >
-                                <FlaskConical className="h-3 w-3 mr-1.5" />
-                                {sendingAlert ? "Enviando..." : "Simular Alerta"}
-                            </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                            <AlertDialogHeader>
-                                <AlertDialogTitle>🧪 Simulación de Alerta</AlertDialogTitle>
-                                <AlertDialogDescription asChild>
-                                    <div className="space-y-4 mt-2">
-                                        <p>
-                                            Envía un email de prueba para <strong>{asset.custom_name}</strong>. Todos los contactos activos
-                                            recibirán la alerta marcada como «SIMULACIÓN».
-                                        </p>
-                                        
-                                        <div className="space-y-1 pt-2 pb-4">
-                                            <p className="text-center text-sm font-medium mb-4 text-slate-300">
-                                                Arrastra gráficamente el nivel de combustible a simular:
-                                            </p>
-                                            
-                                            <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 relative overflow-hidden">
-                                                <FuelGauge 
-                                                    pct={simulatedFuel} 
-                                                    alert={simulatedFuel <= (asset.fuel_alert_threshold_pct ?? 20)} 
-                                                    onChange={setSimulatedFuel} 
-                                                />
-                                            </div>
-                                            
-                                            <p className="text-xs text-center text-slate-500 pt-3">
-                                                Umbral de alerta real configurado: <strong>{asset.fuel_alert_threshold_pct ?? 20}%</strong>
-                                            </p>
-                                        </div>
-                                    </div>
-                                </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction
-                                    onClick={() => sendFuelAlert(true, simulatedFuel)}
+                    {overridePct === null ? (
+                        <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
                                     disabled={sendingAlert}
-                                    className="bg-amber-600 hover:bg-amber-700"
+                                    className="flex-1 border-slate-600 text-slate-300 hover:border-amber-500 hover:text-amber-400 text-xs flex-col items-center py-5"
+                                    title="Aplica un nivel simulado al dashboard y alerta"
                                 >
-                                    <Mail className="h-4 w-4 mr-2" />
-                                    Enviar Email de Prueba
-                                </AlertDialogAction>
-                            </AlertDialogFooter>
-                        </AlertDialogContent>
-                    </AlertDialog>
+                                    <FlaskConical className="h-4 w-4 mb-1" />
+                                    <span className="text-[10px] uppercase tracking-wider">{sendingAlert ? "Aplicando..." : "Simular"}</span>
+                                </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                                <AlertDialogHeader>
+                                    <AlertDialogTitle>🧪 Activar Simulación</AlertDialogTitle>
+                                    <AlertDialogDescription asChild>
+                                        <div className="space-y-4 mt-2">
+                                            <p>
+                                                Elige un porcentaje para aplicar la simulación directamente en el <strong>dashboard</strong>. 
+                                                Si cruza el umbral de alerta, se activará visualmente y enviará el email de prueba.
+                                            </p>
+                                            
+                                            <div className="space-y-1 pt-2 pb-4">
+                                                <p className="text-center text-sm font-medium mb-4 text-slate-300">
+                                                    Arrastra gráficamente el nivel de combustible a simular:
+                                                </p>
+                                                
+                                                <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 relative overflow-hidden">
+                                                    <FuelGauge 
+                                                        pct={simulatedFuel} 
+                                                        alert={simulatedFuel <= (asset.fuel_alert_threshold_pct ?? 20)} 
+                                                        onChange={setSimulatedFuel} 
+                                                    />
+                                                </div>
+                                                
+                                                <p className="text-xs text-center text-slate-500 pt-3">
+                                                    Umbral de alerta real configurado: <strong>{asset.fuel_alert_threshold_pct ?? 20}%</strong>
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction
+                                        onClick={() => {
+                                            setAlertSentAt(null); // Reset para que dispare el email de inmediato si cae en umbral
+                                            setOverridePct(simulatedFuel);
+                                        }}
+                                        disabled={sendingAlert}
+                                        className="bg-amber-600 hover:bg-amber-700"
+                                    >
+                                        Aplicar Simulación
+                                    </AlertDialogAction>
+                                </AlertDialogFooter>
+                            </AlertDialogContent>
+                        </AlertDialog>
+                    ) : (
+                        <Button
+                            size="sm"
+                            variant="destructive"
+                            className="flex-1 bg-amber-600 hover:bg-amber-700 text-xs flex-col items-center py-5"
+                            onClick={() => {
+                                setOverridePct(null);
+                                setAlertSentAt(null);
+                            }}
+                        >
+                            <FlaskConical className="h-4 w-4 mb-1" />
+                            <span className="text-[10px] uppercase tracking-wider">Quitar Simulación</span>
+                        </Button>
+                    )}
                 </div>
             </div>
         </div>
