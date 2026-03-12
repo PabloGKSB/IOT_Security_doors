@@ -61,18 +61,22 @@ export async function POST(request: Request) {
       if (statusError) throw statusError
     }
 
+    const { data: assetData } = await supabase.from("assets").select("asset_type, custom_name").eq("door_id", doorId).single()
+    const isGenerator = assetData?.asset_type === "generator"
+    const displayName = assetData?.custom_name || board_name
+
     const eventLabels = {
       open: "Apertura",
       close: "Cierre",
       authorized: "Acceso Autorizado",
       unauthorized: "Acceso No Autorizado",
       forced: "Apertura Forzada",
-      power_up: "Automático Subido",
-      power_down: "Automático Bajado",
-    } as const
+      power_up: isGenerator ? "Generador Encendido" : "Automático Subido",
+      power_down: isGenerator ? "Generador Apagado" : "Automático Bajado",
+    } as Record<string, string>
 
-    const eventLabel = eventLabels[event_type as keyof typeof eventLabels] || event_type
-    const alertMessage = `${eventLabel} en ${location} - ${board_name}${details?.note ? ` - ${details.note}` : ""}`
+    const eventLabel = eventLabels[event_type] || event_type
+    const alertMessage = `${eventLabel} en ${location} - ${displayName}${details?.note ? ` - ${details.note}` : ""}`
 
     // Envío alertas (tal cual, pero dejo baseUrl un poco más seguro)
     try {

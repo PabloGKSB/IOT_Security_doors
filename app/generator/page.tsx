@@ -16,7 +16,7 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import { ArrowLeft, Settings, RefreshCw, FlaskConical, Mail } from "lucide-react"
+import { ArrowLeft, Settings, RefreshCw, FlaskConical, Mail, Power } from "lucide-react"
 import Link from "next/link"
 
 interface GeneratorAsset {
@@ -144,6 +144,7 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
     const [status, setStatus] = useState<GeneratorStatus | null>(null)
     const [refilling, setRefilling] = useState(false)
     const [sendingAlert, setSendingAlert] = useState(false)
+    const [togglingPower, setTogglingPower] = useState(false)
     const [alertSentAt, setAlertSentAt] = useState<number | null>(null) // timestamp del último envío automático
     const [simulatedFuel, setSimulatedFuel] = useState<number>(15) // Rango para la simulación
     const [overridePct, setOverridePct] = useState<number | null>(null) // Muestra la simulación en el dashboard real
@@ -232,6 +233,41 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
             })
         } finally {
             setSendingAlert(false)
+        }
+    }
+
+    const togglePower = async () => {
+        setTogglingPower(true)
+        try {
+            const currentIsOn = status?.is_on ?? false
+            const event_type = currentIsOn ? "power_down" : "power_up"
+            const res = await fetch("/api/door/event", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    door_id: asset.door_id,
+                    board_name: asset.board_name || asset.custom_name,
+                    location: asset.location,
+                    event_type,
+                    authorized: true,
+                    details: { note: "Simulado desde Dashboard" }
+                })
+            })
+            if (!res.ok) throw new Error("Error interno al simular evento")
+            toast({
+                title: currentIsOn ? "🔌 Generador Apagado" : "⚡ Generador Encendido",
+                description: "Evento inyectado en la base de datos correctamente.",
+            })
+            setOverridePct(null) // Quitar visualización forzada si existía
+            await fetchStatus() // Refrescar 
+        } catch (e) {
+            toast({
+                title: "Error al cambiar estado",
+                description: e instanceof Error ? e.message : "No se pudo inyectar el evento.",
+                variant: "destructive",
+            })
+        } finally {
+            setTogglingPower(false)
         }
     }
 
@@ -456,6 +492,46 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
                             <span className="text-[10px] uppercase tracking-wider">Quitar Simulación</span>
                         </Button>
                     )}
+
+                    {/* Botón Simular Encendido Físico */}
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={togglingPower}
+                                className={`flex-1 border-slate-600 text-slate-300 text-xs flex-col items-center py-5 transition-colors ${isOn ? "hover:border-red-500 hover:text-red-400" : "hover:border-green-500 hover:text-green-400"}`}
+                                title={`Simula inyectar un evento de ${isOn ? "apagado" : "encendido"} físico`}
+                            >
+                                <Power className={`h-4 w-4 mb-1 ${isOn ? "text-red-400" : "text-green-400"}`} />
+                                <span className="text-[10px] uppercase tracking-wider">{togglingPower ? "Aplicando..." : (isOn ? "Apagar" : "Encender")}</span>
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>🔌 Simular {isOn ? "Apagado" : "Encendido"}</AlertDialogTitle>
+                                <AlertDialogDescription asChild>
+                                    <div className="space-y-3 mt-2">
+                                        <p>
+                                            Esto inyectará un evento real de <strong>{isOn ? "Motor Apagado" : "Motor Encendido"}</strong> en la base de datos para el generador <strong>{asset.custom_name}</strong>.
+                                        </p>
+                                        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs p-3 rounded-lg flex items-start gap-2">
+                                            <span>⚠️</span>
+                                            <span>
+                                                El sistema reaccionará como si el ESP32 físico hubiera detectado la ignición o apagado. Esto comenzará a consumir combustible virtual o activará el contador de la misma sesión si es menos de 30 min. Además, enviará el email real de alerta de evento.
+                                            </span>
+                                        </div>
+                                    </div>
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction onClick={togglePower} disabled={togglingPower}>
+                                    Confirmar {isOn ? "Apagado" : "Encendido"}
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
                 </div>
             </div>
         </div>
