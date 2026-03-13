@@ -149,3 +149,9 @@ const int numAuthorizedCards = 2;  // Update count
 3. **Security**: Implement API key authentication
 4. **Reliability**: Add watchdog timer and auto-restart
 5. **Battery Backup**: Add UPS for continuous operation
+
+## Generators Variant (Optional)
+If you are deploying an ESP32 for Generator fuel monitoring instead of Door Security:
+1. Wire the required sensors (Ultrasonic, analog level, or relay sensors) for tracking ignition and fuel.
+2. In your `esp32_firmware.ino` (or custom generator logic), point your `API_URL` to the same `/api/door/event` endpoint but send payloads with `event_type` as `"power_up"` / `"power_down"` / `"fuel_refill"`.
+3. Register the device in the Web Dashboard (`/admin/assets`) selecting "Generator" as asset type.

@@ -5,14 +5,16 @@ Sistema completo de monitoreo de puertas y control de acceso para sucursales en 
 ## Características Principales
 
 - **🔐 Autenticación de Usuarios**: Login seguro con email y contraseña vía Supabase Auth
-- **Monitoreo en Tiempo Real**: Estado de puertas con seguimiento de duración en vivo
+- **Control Centralizado de Activos**: Interfaz de administración para registrar dispositivos (Puertas y Generadores).
+- **Monitoreo en Tiempo Real**: Estado de puertas y generadores con seguimiento en vivo.
+- **Módulo de Generadores**: Visualización interactiva de niveles de combustible, consumo, estimación de autonomía y control de ignición (`power_up`/`power_down`).
 - **Control de Acceso RFID**: Autorización de entrada con tarjetas RFID
 - **Detección de Intrusos**: Alertas por entrada forzada o no autorizada
-- **Notificaciones SMS**: Envío de alertas automáticas a contactos registrados vía Twilio
-- **Dashboard Profesional**: Interfaz moderna con actualizaciones en vivo
+- **Notificaciones Dinámicas (SMS y Email)**: Envío automático de advertencias tempranas (robo, intrusión o combustible bajo).
+- **Dashboard Profesional**: Interfaz moderna con actualizaciones en vivo y paneles duales (`/` para puertas, `/generator` para generadores).
 - **Gestión de Usuarios**: CRUD completo de usuarios autorizados por ubicación
 - **Reportes y Análisis**: Estadísticas detalladas y exportación CSV
-- **Multi-Ubicación**: Soporte para 5 sucursales en Chile
+- **Multi-Ubicación**: Soporte para múltiples sucursales en Chile
 
 ## Ubicaciones Configuradas
 
@@ -33,15 +35,15 @@ El sistema está configurado para las siguientes ubicaciones:
 
 ### Backend
 - Next.js 16 con App Router
-- API Routes para comunicación con ESP32
-- Supabase PostgreSQL con RLS
-- Integración Twilio para SMS
+- API Routes para comunicación con ESP32 (`/api/door/event`, `/api/generator/status`)
+- Supabase PostgreSQL con RLS (Tablas centralizadas como `assets`)
+- Integración Twilio para SMS y Resend/Supabase Edge Functions para Emails
 
 ### Frontend
 - React Server/Client Components
-- Actualizaciones en tiempo real
-- Diseño responsivo profesional
-- Tema oscuro corporativo
+- Actualizaciones en tiempo real e intervalos de sondeo (`setInterval`)
+- Elementos SVG dinámicos (Gauges interactivos para combustible)
+- Diseño responsivo corporativo (Tailwind CSS v4)
 
 ## Inicio Rápido
 
@@ -58,7 +60,7 @@ Antes de acceder al sistema, debes crear una cuenta:
 
 ### 2. Configurar Base de Datos
 
-Ejecutar los scripts SQL en orden desde v0:
+Ejecutar los scripts SQL en orden desde v0 (Ver `scripts/README.md`):
 
 ```bash
 # 1. Limpiar políticas y configurar RLS
@@ -66,6 +68,8 @@ scripts/001_setup_rls_policies.sql
 
 # 2. Insertar ubicaciones de Chile
 scripts/002_seed_chile_locations.sql
+
+# 3. Importante: Ejecutar progresivamente hasta llegar a crear `assets` y soportar `generators` (p. ej. scripts 009, 011).
 ```
 
 ### 3. Variables de Entorno
@@ -75,69 +79,73 @@ Ya configuradas vía integración de Supabase:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-Para SMS (configurar en Vars):
+Para SMS (configurar en Vars de despliegue):
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
 - `TWILIO_PHONE_NUMBER`
 
 ### 4. Desplegar a Vercel
 
-Desde v0:
-1. Hacer clic en "Publish"
+Desde la consola o panel de v0:
+1. Hacer clic en "Publish" o conectar el repositorio
 2. Conectar a Vercel
 3. Las variables de entorno se copian automáticamente
 
 ### 5. Configurar ESP32
 
-1. Abrir `scripts/esp32_firmware.ino`
-2. Actualizar credenciales WiFi:
+Dependiendo de si el dispositivo actuará como puerta o generador, el hardware cambia.
+1. Abrir `scripts/esp32_firmware.ino` (o `esp32_door_sensor.ino`)
+2. Actualizar credenciales WiFi y URL de destino (`/api/door/event`)
+3. **Configurar el identificador para la Base de Datos**:
    ```cpp
-   const char* WIFI_SSID = "TU_WIFI";
-   const char* WIFI_PASSWORD = "TU_PASSWORD";
+   const char* BOARD_NAME = "ESP32-SANTIAGO-01"; // Debe coincidir con el door_id en la tabla `assets`
+   const char* LOCATION = "SANTIAGO CASA MATRIZ"; 
    ```
-3. Actualizar URL de tu deployment:
-   ```cpp
-   const char* API_URL = "https://tu-proyecto.vercel.app/api/door/event";
-   ```
-4. **Configurar ubicación para cada ESP32**:
-   ```cpp
-   const char* BOARD_NAME = "Puerta Principal";
-   const char* LOCATION = "SANTIAGO CASA MATRIZ";  // Cambiar según ubicación
-   ```
-5. Flashear firmware al ESP32-S3
+4. Flashear firmware al ESP32-S3
 
-### 6. Agregar Usuarios Autorizados
+### 6. Configuración de Activos en el Dashboard
 
+Antes de que un dispositivo funcione en la plataforma, **debe estar registrado**:
+1. Ir a `/admin/assets`.
+2. Crear un nuevo Activo.
+3. Asignarle el ID del ESP32 (`door_id`), ubicación, y tipo (`door` o `generator`).
+4. Si es generador, configurar estanque, consumo, y umbral de alerta.
+
+### 7. Agregar Usuarios Autorizados (Para Puertas)
 1. Ir a `/admin/users` en el dashboard
-2. Hacer clic en "Agregar Usuario"
-3. Completar datos y seleccionar ubicaciones autorizadas
-4. Agregar UID de tarjeta RFID
-5. Guardar
+2. Ingresar el UID de la tarjeta RFID e información del empleado.
 
 ## Estructura del Proyecto
 
 ```
 ├── app/
-│   ├── page.tsx                 # Dashboard principal (protegido)
+│   ├── page.tsx                 # Dashboard principal de Puertas (protegido)
+│   ├── generator/
+│   │   └── page.tsx            # Dashboard de Generadores (protegido)
 │   ├── auth/
 │   │   ├── login/page.tsx      # Página de inicio de sesión
-│   │   ├── sign-up/page.tsx    # Página de registro
-│   │   └── callback/route.ts   # Callback de confirmación email
+│   │   └── ...
 │   ├── admin/
-│   │   ├── page.tsx            # Panel de administración (protegido)
-│   │   ├── users/page.tsx      # Gestión de usuarios (protegido)
-│   │   ├── contacts/page.tsx   # Gestión de contactos SMS (protegido)
-│   │   └── reports/page.tsx    # Reportes y análisis (protegido)
+│   │   ├── page.tsx            # Panel de administración (Protegido)
+│   │   ├── assets/page.tsx     # Gestión de Activos Críticos (Puertas/Generadores)
+│   │   ├── users/page.tsx      # Gestión de usuarios RFID
+│   │   ├── contacts/page.tsx   # Gestión de contactos de alertas
+│   │   └── reports/page.tsx    # Análisis exportable a CSV
 │   └── api/
-│       ├── door/
-│       │   ├── event/route.ts         # Registrar eventos ESP32
-│       │   ├── events/route.ts        # Obtener historial
-│       │   └── status/route.ts        # Estado actual
-│       ├── authorized-users/route.ts  # CRUD usuarios
-│       ├── alert-contacts/route.ts    # CRUD contactos
-│       ├── alerts/send/route.ts       # Enviar SMS
-│       └── stats/route.ts             # Estadísticas
+│       ├── door/ 
+│       │   ├── event/route.ts         # Ingesta de eventos (ESP32)
+│       │   └── status/route.ts        # Polling de estado
+│       ├── generator/
+│       │   ├── alert/route.ts         # Disparo de simulaciones y alertas de combustible
+│       │   ├── refill/route.ts        # Lógica de recarga de estanque
+│       │   └── status/route.ts        # Cálculo matemático de consumo y estado
+│       ├── assets/route.ts            # CRUD de dispositivos
+│       ├── alerts/send/route.ts       # Backend para despachar SMS/Emails
+│       └── ...
 ├── components/
+│   ├── dashboard-monitor.tsx    # Monitor puertas
+│   ├── ...
+```
 │   ├── dashboard-monitor.tsx    # Monitor en tiempo real
 │   ├── events-table.tsx         # Tabla de eventos
 │   ├── stats-cards.tsx          # Tarjetas estadísticas
@@ -157,16 +165,22 @@ Desde v0:
 ## API Endpoints
 
 ### POST /api/door/event
-Registrar evento desde ESP32
+Endpoint unificado para ingestión de eventos del ESP32.
 ```json
 {
-  "board_name": "Puerta Principal",
+  "board_name": "ESP32-SANTIAGO-01",
   "location": "SANTIAGO CASA MATRIZ",
-  "event_type": "open|close|forced|authorized|unauthorized",
+  "event_type": "open|close|forced|authorized|unauthorized|power_up|power_down|fuel_refill",
   "authorized": true|false,
-  "details": { "note": "Mensaje opcional" }
+  "details": { "note": "Opcional. Ej. Sensor de puerta activado" }
 }
 ```
+
+### GET /api/generator/status?board_id=XYZ
+Devuelve el cálculo en tiempo real (consumo, matemáticas de estanque y autonomía) de un generador específico.
+
+### POST /api/generator/alert
+Genera y despacha una alerta de nivel bajo de combustible (o en modo test simulado `alert_type: "test"`).
 
 ### GET /api/door/status
 Obtener estado actual de todas las puertas
@@ -205,11 +219,15 @@ Enviar alerta SMS a contactos activos
 
 ### Panel de Administración (`/admin`) - 🔐 Requiere Autenticación
 
+#### Activos Centralizados (`/admin/assets`)
+- **Gestión principal del Hardware**. Identifica a cada módulo ESP32.
+- Define si un microcontrolador funciona como `door` (Monitoreo de acceso) o `generator` (Monitoreo de energía).
+- Configura métricas customizadas para generadores: tamaño de estanque, litros/h, % de Alerta Baja.
+
 #### Usuarios Autorizados (`/admin/users`)
-- Agregar, editar y eliminar usuarios
-- Asignar ubicaciones autorizadas
-- Registrar tarjetas RFID
-- Activar/desactivar acceso
+- Agregar y enlazar tarjetas RFID al perfil de los empleados.
+- Asignar zonas físicas (locations) autorizadas.
+- Activar/desactivar pases temporales.
 
 #### Contactos de Alertas (`/admin/contacts`)
 - Gestionar números para SMS

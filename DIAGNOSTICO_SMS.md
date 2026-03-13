@@ -34,17 +34,16 @@ Los logs mostrarán información detallada:
 [v0] ✓ SMS enviado exitosamente - SID: SM1234567890
 ```
 
-### 4. Eventos que Activan SMS
+### 4. Eventos que Activan Notificaciones
 
-**Eventos ESP32:**
+**Eventos de Puertas (ESP32 o Manuales):**
 - `forced` - Puerta forzada
-- `unauthorized` - Acceso no autorizado
-- Cualquier evento con `authorized: false`
+- `unauthorized` - Acceso no autorizado (tarjeta desconocida)
+- Cualquier evento donde el Payload marque `authorized: false`
 
-**Eventos Manuales:**
-- `forced` - Puerta forzada
-- `unauthorized` - Acceso no autorizado
-- `open` con autorización falsa
+**Eventos de Generadores (Web/Sensores):**
+- `fuel_low` - Alerta periódica de estanque de combustible bajo (Enviada desde la interfaz o Cron vía `/api/generator/alert`)
+- `test_fuel_alert` - Alerta de prueba manipulando simuladores visuales en el dashboard del generador.
 
 ### 5. Flujo de Envío SMS
 

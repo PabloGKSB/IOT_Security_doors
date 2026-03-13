@@ -129,7 +129,19 @@ const char* location = "PUERTO MONTT";
 4. Conectar alimentación permanente
 5. Etiquetar el tablero con nombre y ubicación
 
-## Tarjetas RFID por Sucursal
+### 6. Registrar en el Sistema Central (Admin)
+
+Para que el servidor acepte la data del ESP32 S3 y la muestre a los usuarios, debes declararlo.
+1. Ingresa a la Plataforma Web -> Panel de Administrador (`/admin/assets`).
+2. Dale click a "Nuevo Activo".
+3. En el campo **ID del Activo (ESP32)**, escribe exactamente la variable `boardName` que introdujiste en el código de Arduino (Ej: `ESP32-SANTIAGO-01`).
+4. Determina la función del equipo en **Tipo de Activo**:
+   - **Tablero (Puerta)**: Registra personal con RFID y detectará intrusiones (Dashboard `/`).
+   - **Generador**: Calculará horas de uso de motor continuo, simulaciones, y despachará alarmas de combustible crítico (Dashboard `/generator`).
+      - *En este caso deberás ingresar Capacidad Estanque (L) y Consumo L/Hora.*
+5. Clickea "Guardar Cambios". Acto seguido, los datos del microcontrolador poblarán el sistema en vivo.
+
+## Tarjetas RFID por Sucursal (Equipos de Puerta)
 
 ### Obtener UID de Tarjetas RFID
 

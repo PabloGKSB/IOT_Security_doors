@@ -20,8 +20,9 @@ Existen dos formas de limpiar la base de datos del sistema IoT:
 - ✅ Referencias en el estado de puertas (door_status)
 
 **Datos que se mantienen:**
-- ✅ Estructura de las tablas
-- ✅ Registros de estado de puertas (pero reseteados a cerrado)
+- ✅ Estructura de las tablas y Políticas RLS.
+- ✅ Los activos registrados (Tabla `assets`). Las Puertas y Generadores no se eliminan.
+- ✅ Registros de estado de puertas (`door_status` reseteadas a "cerrado").
 
 ### 2. Ejecutar Script SQL Directamente
 
