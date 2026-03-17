@@ -296,20 +296,48 @@ function GeneratorCard({ asset }: { asset: GeneratorAsset }) {
         ? ((asset.fuel_capacity_liters ?? 0) * (overridePct / 100))
         : (status?.fuel_remaining_liters ?? 0)
 
+    const fuelColor = displayAlert ? "red" : displayPct > 50 ? "green" : "amber"
+
+    const getBorderClass = () => {
+        if (!hasConfig) return isOn ? "border-green-500 shadow-[0_0_32px_rgba(34,197,94,0.25)]" : "border-slate-600"
+        
+        if (isOn) {
+            return fuelColor === "red" ? "border-red-500 shadow-[0_0_32px_rgba(239,68,68,0.25)]"
+                : fuelColor === "amber" ? "border-amber-500 shadow-[0_0_32px_rgba(245,158,11,0.25)]"
+                : "border-green-500 shadow-[0_0_32px_rgba(34,197,94,0.25)]"
+        } else {
+            return fuelColor === "red" ? "border-red-900 shadow-[0_0_15px_rgba(239,68,68,0.1)]"
+                : fuelColor === "amber" ? "border-amber-900/60"
+                : "border-slate-600"
+        }
+    }
+
+    const getTopBarClass = () => {
+        if (!hasConfig) return isOn ? "bg-green-500" : "bg-slate-600"
+
+        if (isOn) {
+            return fuelColor === "red" ? "bg-red-500"
+                : fuelColor === "amber" ? "bg-amber-500"
+                : "bg-green-500"
+        } else {
+            return fuelColor === "red" ? "bg-red-900"
+                : fuelColor === "amber" ? "bg-amber-700/50"
+                : "bg-slate-600"
+        }
+    }
+
     return (
         <div
             className={`
         relative rounded-2xl border-2 overflow-hidden flex flex-col
-        transition-all duration-700
-        ${isOn
-                    ? "border-green-500 bg-gradient-to-b from-slate-900 to-slate-800 shadow-[0_0_32px_rgba(34,197,94,0.25)]"
-                    : "border-slate-600 bg-gradient-to-b from-slate-900 to-slate-800"
-                }
+        transition-all duration-700 bg-gradient-to-b from-slate-900 to-slate-800
+
+        ${getBorderClass()}
         ${pulse ? "scale-[1.01]" : ""}
       `}
         >
             {/* Banda superior de estado */}
-            <div className={`w-full h-1.5 transition-colors duration-700 ${isOn ? "bg-green-500" : "bg-slate-600"}`} />
+            <div className={`w-full h-1.5 transition-colors duration-700 ${getTopBarClass()}`} />
 
             {/* Header */}
             <div className="px-6 pt-5 pb-3 flex items-start justify-between">
